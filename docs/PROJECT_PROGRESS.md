@@ -109,11 +109,24 @@ pm run build)
 - [x] Verified full regression test suite (mvn clean test PASSED: 40/40 clean tests)
 - [x] Created docs/PHASE_1H_LEAVE_MANAGEMENT.md
 
-### Phase 1I: Payroll & Salary Structure Engine (Upcoming)
-- [ ] Salary components (Basic, HRA, DA, Special Allowance, PF, ESI, TDS, Professional Tax)
-- [ ] Employee salary structure configuration and versioning
-- [ ] Monthly payroll processing and attendance/leave integration (LOP calculation)
-- [ ] Payslip generation and disbursement records
+### Phase 1I: Payroll & Salary Structure Engine
+- [x] Conducted pre-implementation audit (docs/PHASE_1I_PRE_IMPLEMENTATION_AUDIT.md)
+- [x] Created V8__payroll_salary_structure_schema.sql (13 tables with default-deny FORCE RLS matching app.current_tenant_id)
+- [x] Implemented JPA domain model: SalaryComponent, SalaryStructure, SalaryStructureComponent, EmployeeSalaryStructure, SalaryRevisionHistory, StatutoryRule, PayrollPeriod, PayrollRun, PayrollRunEmployee, PayrollLineItem, PayrollCalculationSnapshot, PayrollAdjustment, Payslip
+- [x] Salary components and templates configuration (FIXED_AMOUNT, PERCENTAGE on BASIC/GROSS)
+- [x] Employee salary structure assignment with interval overlap detection and versioned revision history tracking
+- [x] Statutory compliance rules (EPF 12% capped at wage ceiling, ESI 0.75%/3.25%, Professional Tax, TDS)
+- [x] Deterministic payroll calculation engine with cross-module integration (Loss of Pay / LOP unpaid leaves, mid-month pro-rating)
+- [x] Complete payroll lifecycle workflow: DRAFT -> PROCESSING -> REVIEW -> APPROVED -> FINALIZED
+- [x] Calculation audit snapshots and automated payslip generation with self-service employee access isolation
+- [x] Verified full regression test suite (mvn clean test PASSED: 46/46 clean tests)
+- [x] Created docs/PHASE_1I_PAYROLL_ENGINE.md
+
+### Phase 1J: Performance Management & Appraisals (Upcoming)
+- [ ] Goal setting and OKR tracking
+- [ ] Performance appraisal cycles and 360-degree feedback
+- [ ] Competency frameworks and ratings
+- [ ] Performance improvement plans (PIP)
 
 ---
 
@@ -125,3 +138,4 @@ pm run build)
   - Implemented Phase 1F: Attendance & Geofencing Engine (V5__attendance_engine_schema.sql), Haversine GPS geofencing, selfie audit metadata, break management, and attendance corrections. Verified test suite with 24/24 tests passing.
   - Implemented Phase 1G: Shift Management & Scheduling Engine (V6__shift_management_schema.sql), overnight & DST calculations, interval overlap conflict detection, draft roster publishing, shift change requests, and multi-session attendance integration. Verified regression suite with 32/32 tests passing.
   - Implemented Phase 1H: Leave Management & Holiday Calendar Engine (V7__leave_management_schema.sql), company & branch holiday calendar, idempotent monthly accrual, immutable leave ledger, non-working day deduction, approval workflows with self-approval prevention, and cancellation ledger reversal. Verified regression suite with 40/40 tests passing.
+  - Implemented Phase 1I: Payroll & Salary Structure Engine (V8__payroll_salary_structure_schema.sql), configurable salary structures, versioned salary revisions, statutory deduction rules (EPF, ESI, PT), deterministic calculation engine with LOP leave integration, multi-stage approval workflow, immutable audit snapshots, and payslip generation. Verified regression suite with 46/46 tests passing.

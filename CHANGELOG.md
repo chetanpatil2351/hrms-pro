@@ -55,3 +55,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Attendance integration preserving punch history and mapping approved leave days.
   - Multi-dimensional reporting endpoints by employee, branch, department, and summary filter.
   - Full test suite verified with 100% pass rate (40/40 clean tests passing).
+- Phase 1I Payroll & Salary Structure Engine (docs/PHASE_1I_PAYROLL_ENGINE.md):
+  - Pre-implementation audit and architectural verification in docs/PHASE_1I_PRE_IMPLEMENTATION_AUDIT.md.
+  - Flyway migration V8__payroll_salary_structure_schema.sql with default-deny FORCE RLS on 13 tables: salary_components, salary_structures, salary_structure_components, employee_salary_structures, salary_revision_history, statutory_rules, payroll_periods, payroll_runs, payroll_run_employees, payroll_line_items, payroll_calculation_snapshots, payroll_adjustments, payslips.
+  - JPA entities: SalaryComponent, SalaryStructure, SalaryStructureComponent, EmployeeSalaryStructure, SalaryRevisionHistory, StatutoryRule, PayrollPeriod, PayrollRun, PayrollRunEmployee, PayrollLineItem, PayrollCalculationSnapshot, PayrollAdjustment, Payslip.
+  - Configurable salary components (FIXED_AMOUNT, PERCENTAGE on BASIC/GROSS) and salary structure templates.
+  - Versioned employee salary structure assignments with interval overlap conflict detection and immutable revision history logging.
+  - Configurable statutory compliance rules (EPF 12% capped at wage ceiling, ESI 0.75%/3.25%, Professional Tax, TDS).
+  - Deterministic payroll calculation engine handling mid-month joining, exits, pro-rating, Loss of Pay (LOP) unpaid leaves, and pre-payroll adjustments.
+  - Complete payroll period lifecycle workflow: DRAFT -> PROCESSING -> REVIEW -> APPROVED -> FINALIZED.
+  - Immutable calculation snapshots and automated payslip generation with self-service employee access isolation.
+  - Full automated test suite verified with 100% pass rate (46/46 clean tests passing).
