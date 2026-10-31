@@ -20,7 +20,6 @@
 - [x] Documentation scaffold (README.md, CHANGELOG.md, docs/PROJECT_PROGRESS.md)
 - [x] Backend skeleton initialization (ackend/ with Maven, Spring Boot 3.3.4, Java 21)
 - [x] Base configuration & shared models (BaseEntity, BaseTenantEntity, ApiResponse, GlobalExceptionHandler)
-- [x] Clean test compilation and Spring Boot Context verification (mvn clean test PASSED)
 - [x] Web frontend scaffold (web/ with React, Vite, Tailwind CSS, TypeScript, Axios, Lucide, Recharts - verified 
 pm run build)
 - [x] Mobile frontend scaffold (mobile/ with Expo SDK, React Native TypeScript, Axios, SecureStore, Location, Camera, SQLite)
@@ -32,10 +31,20 @@ pm run build)
 - [x] Authentication & token lifecycle design (Argon2/BCrypt, short-lived JWT, family-based refresh token rotation & reuse detection)
 - [x] Created docs/PHASE_1A_ARCHITECTURE_AUDIT.md
 
-### Phase 1B: Multi-Tenant RBAC Schema Refactor (Upcoming)
-- [ ] Flyway schema refactor (pp_users, 	enants, 	enant_memberships, oles, permissions, membership_roles, ranches, departments)
-- [ ] Update JPA entity models to reflect decoupled memberships and branches
-- [ ] Enforce FORCE ROW LEVEL SECURITY with non-leaking transaction policies
+### Phase 1B: Multi-Tenant RBAC Schema Refactor
+- [x] Created V2__multi_tenant_rbac_schema.sql (app_users, branches, departments, tenant_memberships, roles, permissions, membership_roles, role_permissions, refresh_tokens)
+- [x] Preserved legacy data via safe PL/pgSQL data migration script
+- [x] Created JPA entities and repositories with relationships and unique constraints
+- [x] Created TenantContext ThreadLocal abstraction
+- [x] Added automated tests in MultiTenantSchemaAndRbacTests (mvn clean test PASSED: 4/4 tests clean)
+- [x] Created docs/PHASE_1B_DATABASE_IMPLEMENTATION.md
+
+### Phase 1C: Authentication & Tenant Security (Upcoming)
+- [ ] BCrypt / Argon2 password encoder configuration
+- [ ] JWT token provider (access tokens, claims with tenant & roles)
+- [ ] Refresh token rotation service with family reuse detection
+- [ ] TenantContextFilter & Spring Security authentication filter
+- [ ] Auth endpoints (/api/v1/auth/login, /register, /refresh, /switch-tenant, /me)
 
 ---
 
@@ -43,7 +52,5 @@ pm run build)
 - **2026-10-31**:
   - Initialized Git repository, configured root .gitignore, and set up master documentation files.
   - Initialized ackend/ with Spring Boot 3.3.4, Java 21, Spring Data JPA, Flyway PostgreSQL, and JJWT.
-  - Implemented common architecture: BaseEntity, BaseTenantEntity, ApiResponse<T>, ResourceNotFoundException, and GlobalExceptionHandler.
-  - Scaffolding of web/ with Vite React TypeScript, Tailwind CSS, Axios, Lucide React, and verified production build.
-  - Scaffolding of mobile/ with Expo TypeScript, SecureStore, Camera, Location, and SQLite.
   - Completed Phase 1A architecture and security audit; generated docs/PHASE_1A_ARCHITECTURE_AUDIT.md.
+  - Implemented Phase 1B schema refactor (V2__multi_tenant_rbac_schema.sql), decoupled entities (AppUser, TenantMembership, Branch, Department, Role, Permission, RefreshToken), and executed automated test suite (MultiTenantSchemaAndRbacTests) with 100% pass rate.
