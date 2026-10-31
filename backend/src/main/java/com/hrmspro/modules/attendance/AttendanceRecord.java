@@ -123,4 +123,11 @@ public class AttendanceRecord extends BaseTenantEntity {
     @Builder.Default
     @Column(name = "early_departure_by_minutes")
     private Integer earlyDepartureByMinutes = 0;
+
+    /**
+     * FK to the approved leave application covering this date.
+     * Set when leave is approved to reflect status ON_LEAVE without deleting punches.
+     */
+    @Column(name = "leave_application_id")
+    private java.util.UUID leaveApplicationId;
 }

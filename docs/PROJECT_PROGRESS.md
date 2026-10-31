@@ -94,11 +94,26 @@ pm run build)
 - [x] Verified full regression test suite (mvn clean test PASSED: 32/32 clean tests)
 - [x] Created docs/PHASE_1G_SHIFT_MANAGEMENT.md
 
-### Phase 1H: Leave Management Engine (Upcoming)
-- [ ] Leave types and policy configuration (annual, sick, casual, maternity, comp-off)
-- [ ] Leave balance accrual, carry-forward, and lapse rules
-- [ ] Leave application, document attachment, and manager approval workflows
-- [ ] Leave calendar, sandwich leave policies, and attendance integration
+### Phase 1H: Leave Management & Holiday Calendar Engine
+- [x] Created V7__leave_management_schema.sql (holidays, leave_types, leave_policies, employee_leave_balances, leave_ledger, leave_applications, leave_approval_steps with FORCE RLS, additive leave_application_id on attendance_records)
+- [x] Implemented Holiday, LeaveType, LeavePolicy, EmployeeLeaveBalance, LeaveLedger, LeaveApplication, LeaveApprovalStep JPA entities & repositories
+- [x] Holiday calendar management supporting company-wide and branch-scoped holidays
+- [x] Leave types and policies configuration (annual allocation, monthly accrual, carry-forward, negative balance limits)
+- [x] Idempotent accrual engine and double-entry immutable audit ledger (LeaveLedger)
+- [x] Dynamic chargeable leave days calculation deducting weekly offs and branch holidays
+- [x] Leave applications (full-day, half-day) with overlap rejection and balance reservation
+- [x] Approval/rejection workflow with reporting manager routing and self-approval prevention
+- [x] Leave cancellation with automatic ledger credit reversal
+- [x] Attendance integration (leave lookup on date and status ON_LEAVE without deleting punches)
+- [x] Leave reports by employee, branch, department, and multi-filter summary
+- [x] Verified full regression test suite (mvn clean test PASSED: 40/40 clean tests)
+- [x] Created docs/PHASE_1H_LEAVE_MANAGEMENT.md
+
+### Phase 1I: Payroll & Salary Structure Engine (Upcoming)
+- [ ] Salary components (Basic, HRA, DA, Special Allowance, PF, ESI, TDS, Professional Tax)
+- [ ] Employee salary structure configuration and versioning
+- [ ] Monthly payroll processing and attendance/leave integration (LOP calculation)
+- [ ] Payslip generation and disbursement records
 
 ---
 
@@ -109,3 +124,4 @@ pm run build)
   - Implemented Phase 1E: Employee data architecture (V4__employee_management_schema.sql), employee CRUD, multi-criteria filtering, document metadata, audit history tracking, and identity masking. Verified test suite with 21/21 tests passing.
   - Implemented Phase 1F: Attendance & Geofencing Engine (V5__attendance_engine_schema.sql), Haversine GPS geofencing, selfie audit metadata, break management, and attendance corrections. Verified test suite with 24/24 tests passing.
   - Implemented Phase 1G: Shift Management & Scheduling Engine (V6__shift_management_schema.sql), overnight & DST calculations, interval overlap conflict detection, draft roster publishing, shift change requests, and multi-session attendance integration. Verified regression suite with 32/32 tests passing.
+  - Implemented Phase 1H: Leave Management & Holiday Calendar Engine (V7__leave_management_schema.sql), company & branch holiday calendar, idempotent monthly accrual, immutable leave ledger, non-working day deduction, approval workflows with self-approval prevention, and cancellation ledger reversal. Verified regression suite with 40/40 tests passing.

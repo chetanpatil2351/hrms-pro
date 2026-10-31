@@ -42,3 +42,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Multi-session split shifts on same date with sequential session_number discriminator.
   - Shift policy snapshot preservation on attendance records for immutable historical baseline.
   - Full test suite verified with 100% pass rate (32/32 clean tests passing).
+- Phase 1H Leave Management & Holiday Calendar Engine (docs/PHASE_1H_LEAVE_MANAGEMENT.md):
+  - Flyway migration V7__leave_management_schema.sql with default-deny RLS on holidays, leave_types, leave_policies, employee_leave_balances, leave_ledger, leave_applications, and leave_approval_steps; additive leave_application_id column on attendance_records.
+  - JPA entities: Holiday, LeaveType, LeavePolicy, EmployeeLeaveBalance, LeaveLedger, LeaveApplication, LeaveApprovalStep.
+  - Holiday calendar operations supporting company-wide and branch-specific holidays.
+  - Leave types and policies configuration with annual allocation, monthly accrual, carry-forward, and negative balance thresholds.
+  - Idempotent monthly accrual engine and immutable double-entry leave ledger (LeaveLedger).
+  - Chargeable leave days calculation dynamically deducting weekly offs and branch holidays based on roster and shift policies.
+  - Leave application submission with overlap rejection, insufficient balance checks, and balance reservation.
+  - Manager review workflow with reporting manager routing, comments, and self-approval prevention.
+  - Approved leave cancellation with automatic ledger credit reversal.
+  - Attendance integration preserving punch history and mapping approved leave days.
+  - Multi-dimensional reporting endpoints by employee, branch, department, and summary filter.
+  - Full test suite verified with 100% pass rate (40/40 clean tests passing).
