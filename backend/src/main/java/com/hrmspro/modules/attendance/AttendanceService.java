@@ -36,6 +36,8 @@ public class AttendanceService {
     private final BranchRepository branchRepository;
     private final TenantRepository tenantRepository;
     private final AppUserRepository userRepository;
+    private final com.hrmspro.modules.shift.ShiftAssignmentService shiftAssignmentService;
+    private final com.hrmspro.modules.shift.ShiftService shiftService;
 
     // --- Geofence Location Management ---
 
@@ -93,6 +95,10 @@ public class AttendanceService {
         ZoneId zoneId = getTenantZoneId(tenantId);
         LocalDate attendanceDate = serverNow.atZone(zoneId).toLocalDate();
 
+        // Safe Session Number Allocation
+        Integer maxSession = recordRepository.findMaxSessionNumber(tenantId, employee.getId(), attendanceDate);
+        int sessionNumber = (maxSession != null ? maxSession : 0) + 1;
+
         // 3. Geofence Distance Validation
         GeofenceEvaluation geofence = evaluateGeofence(tenantId, employee.getBranch(), request.getLatitude(), request.getLongitude(), request.getLocationId());
 
@@ -101,11 +107,53 @@ public class AttendanceService {
                     String.format("%.1f", geofence.distanceMeters) + "m away, limit " + geofence.radiusMeters + "m)");
         }
 
-        // 4. Create Master Record
+        // 4. Shift Integration & Late Arrival Evaluation
+        UUID assignedShiftId = null;
+        String shiftSnapshot = null;
+        Instant scheduledStartUtc = null;
+        Instant scheduledEndUtc = null;
+        Integer scheduledWorkMinutes = null;
+        boolean isLate = false;
+        int lateByMinutes = 0;
+
+        Optional<com.hrmspro.modules.shift.EmployeeShiftAssignment> optAssignment =
+                shiftAssignmentService.resolveEffectiveAssignment(employee.getId(), attendanceDate);
+
+        if (optAssignment.isPresent()) {
+            com.hrmspro.modules.shift.EmployeeShiftAssignment assignment = optAssignment.get();
+            com.hrmspro.modules.shift.ShiftTemplate template = assignment.getShiftTemplate();
+            assignedShiftId = assignment.getId();
+            shiftSnapshot = shiftService.buildShiftSnapshot(template);
+            scheduledWorkMinutes = template.getTotalScheduledMinutes();
+
+            ZoneId shiftZoneId = ZoneId.of(template.getTimezone());
+            scheduledStartUtc = com.hrmspro.modules.shift.ShiftService.computeScheduledStart(
+                    attendanceDate, template.getStartTime(), shiftZoneId);
+            scheduledEndUtc = com.hrmspro.modules.shift.ShiftService.computeScheduledEnd(
+                    attendanceDate, template.getEndTime(), template.getIsOvernight(), shiftZoneId);
+
+            int graceMinutes = template.getGracePeriodMinutes() != null ? template.getGracePeriodMinutes() : 0;
+            Instant graceDeadline = scheduledStartUtc.plus(Duration.ofMinutes(graceMinutes));
+
+            if (serverNow.isAfter(graceDeadline)) {
+                isLate = true;
+                lateByMinutes = (int) Duration.between(scheduledStartUtc, serverNow).toMinutes();
+            }
+        }
+
+        // 5. Create Master Record
         AttendanceRecord record = AttendanceRecord.builder()
                 .employee(employee)
                 .branch(employee.getBranch())
                 .attendanceDate(attendanceDate)
+                .sessionNumber(sessionNumber)
+                .assignedShiftId(assignedShiftId)
+                .shiftSnapshot(shiftSnapshot)
+                .scheduledStartUtc(scheduledStartUtc)
+                .scheduledEndUtc(scheduledEndUtc)
+                .scheduledWorkMinutes(scheduledWorkMinutes)
+                .isLate(isLate)
+                .lateByMinutes(lateByMinutes)
                 .checkInTime(serverNow)
                 .status("IN_PROGRESS")
                 .isGeofenceVerified(!geofence.failed)
@@ -175,10 +223,20 @@ public class AttendanceService {
                 .sum();
         int netWorkMinutes = Math.max(0, totalWorkMinutes - totalBreakMinutes);
 
+        // Early departure calculation if scheduledEndUtc is present
+        boolean isEarlyDeparture = false;
+        int earlyDepartureByMinutes = 0;
+        if (record.getScheduledEndUtc() != null && serverNow.isBefore(record.getScheduledEndUtc())) {
+            isEarlyDeparture = true;
+            earlyDepartureByMinutes = (int) Duration.between(serverNow, record.getScheduledEndUtc()).toMinutes();
+        }
+
         record.setCheckOutTime(serverNow);
         record.setWorkDurationMinutes(totalWorkMinutes);
         record.setBreakDurationMinutes(totalBreakMinutes);
         record.setNetWorkDurationMinutes(netWorkMinutes);
+        record.setIsEarlyDeparture(isEarlyDeparture);
+        record.setEarlyDepartureByMinutes(earlyDepartureByMinutes);
         record.setStatus(netWorkMinutes >= 480 ? "PRESENT" : (netWorkMinutes >= 240 ? "HALF_DAY" : "INCOMPLETE"));
         record = recordRepository.save(record);
 
@@ -454,6 +512,11 @@ public class AttendanceService {
                 .isEarlyDeparture(r.getIsEarlyDeparture())
                 .isGeofenceVerified(r.getIsGeofenceVerified())
                 .isSelfieVerified(r.getIsSelfieVerified())
+                .sessionNumber(r.getSessionNumber())
+                .assignedShiftId(r.getAssignedShiftId())
+                .scheduledWorkMinutes(r.getScheduledWorkMinutes())
+                .lateByMinutes(r.getLateByMinutes())
+                .earlyDepartureByMinutes(r.getEarlyDepartureByMinutes())
                 .breaks(breaks)
                 .build();
     }

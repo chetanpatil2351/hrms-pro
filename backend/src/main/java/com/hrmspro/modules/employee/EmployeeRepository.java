@@ -14,15 +14,23 @@ import java.util.UUID;
 @Repository
 public interface EmployeeRepository extends JpaRepository<Employee, UUID> {
 
+    Optional<Employee> findByIdAndTenantId(UUID id, UUID tenantId);
+
     Optional<Employee> findByTenantIdAndEmployeeCode(UUID tenantId, String employeeCode);
 
     Optional<Employee> findByTenantIdAndUserId(UUID tenantId, UUID userId);
+
+    Optional<Employee> findByUserIdAndTenantId(UUID userId, UUID tenantId);
 
     boolean existsByTenantIdAndEmployeeCode(UUID tenantId, String employeeCode);
 
     long countByTenantIdAndEmploymentStatus(UUID tenantId, String status);
 
     long countByTenantId(UUID tenantId);
+
+    List<Employee> findByTenantIdAndBranchId(UUID tenantId, UUID branchId);
+
+    Page<Employee> findByTenantId(UUID tenantId, Pageable pageable);
 
     @Query("""
         SELECT e FROM Employee e

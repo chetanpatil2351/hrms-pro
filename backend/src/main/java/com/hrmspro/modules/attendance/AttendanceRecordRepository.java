@@ -15,9 +15,14 @@ import java.util.UUID;
 @Repository
 public interface AttendanceRecordRepository extends JpaRepository<AttendanceRecord, UUID> {
 
+    Optional<AttendanceRecord> findByTenantIdAndEmployeeIdAndAttendanceDateAndSessionNumber(UUID tenantId, UUID employeeId, LocalDate attendanceDate, Integer sessionNumber);
+
     Optional<AttendanceRecord> findByTenantIdAndEmployeeIdAndAttendanceDate(UUID tenantId, UUID employeeId, LocalDate attendanceDate);
 
     Optional<AttendanceRecord> findFirstByTenantIdAndEmployeeIdAndStatusOrderByCheckInTimeDesc(UUID tenantId, UUID employeeId, String status);
+
+    @Query("SELECT COALESCE(MAX(a.sessionNumber), 0) FROM AttendanceRecord a WHERE a.tenantId = :tenantId AND a.employee.id = :employeeId AND a.attendanceDate = :attendanceDate")
+    Integer findMaxSessionNumber(@Param("tenantId") UUID tenantId, @Param("employeeId") UUID employeeId, @Param("attendanceDate") LocalDate attendanceDate);
 
     Page<AttendanceRecord> findByTenantIdAndEmployeeIdOrderByAttendanceDateDesc(UUID tenantId, UUID employeeId, Pageable pageable);
 

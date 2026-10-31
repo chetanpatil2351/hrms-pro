@@ -36,5 +36,11 @@ public class AttendanceResponseDto {
     private Boolean isGeofenceVerified;
     private Boolean isSelfieVerified;
 
+    private Integer sessionNumber;
+    private UUID assignedShiftId;
+    private Integer scheduledWorkMinutes;
+    private Integer lateByMinutes;
+    private Integer earlyDepartureByMinutes;
+
     private List<AttendanceBreakDto> breaks;
 }

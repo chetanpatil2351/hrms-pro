@@ -29,3 +29,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Punch correction request and review/approval workflow.
   - REST endpoints for locations, check-in, check-out, break sessions, and attendance corrections.
   - Full test suite verified with 100% pass rate (24/24 clean tests passing).
+- Phase 1G Shift Management & Scheduling Engine (docs/PHASE_1G_SHIFT_MANAGEMENT.md):
+  - Pre-implementation audit verified `app.current_tenant_id` setting consistency across code and all migrations.
+  - Flyway migration V6__shift_management_schema.sql with default-deny RLS on shift_templates, employee_shift_assignments, shift_rosters, shift_change_requests, and shift_assignment_history; additive multi-session and shift snapshot columns on attendance_records.
+  - JPA entities: ShiftTemplate, EmployeeShiftAssignment, ShiftRoster, ShiftChangeRequest, ShiftAssignmentHistory.
+  - Shift template CRUD with unique code per tenant, JSON weekly off days validation, and timezone-aware scheduling.
+  - Overnight shifts crossing midnight and DST spring-forward (23h) / fall-back (25h) duration calculation.
+  - Employee shift assignments with interval overlap detection for bounded and open-ended ranges.
+  - Bulk shift assignment endpoint with skip-conflicting flag and immutable audit logging.
+  - Roster generation in DRAFT status with weekly off detection, publish, and cancellation workflows.
+  - Employee shift change request submission, manager review, and self-approval prevention.
+  - Multi-session split shifts on same date with sequential session_number discriminator.
+  - Shift policy snapshot preservation on attendance records for immutable historical baseline.
+  - Full test suite verified with 100% pass rate (32/32 clean tests passing).

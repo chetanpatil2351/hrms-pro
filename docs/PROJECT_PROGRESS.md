@@ -79,11 +79,26 @@ pm run build)
 - [x] Verified full test suite (mvn clean test PASSED: 24/24 clean tests)
 - [x] Created docs/PHASE_1F_ATTENDANCE_ENGINE.md
 
-### Phase 1G: Shift Management & Scheduling (Upcoming)
-- [ ] Shift configuration and policy models (rotational, flexible, split shifts)
-- [ ] Shift assignment and employee scheduling
-- [ ] Grace periods, late-mark, and early-exit calculation engine
-- [ ] Overtime and comp-off calculation rules
+### Phase 1G: Shift Management & Scheduling Engine
+- [x] Pre-implementation audit verified `app.current_tenant_id` convention across code and migrations V2-V6
+- [x] Created V6__shift_management_schema.sql (shift_templates, employee_shift_assignments, shift_rosters, shift_change_requests, shift_assignment_history with FORCE RLS, additive attendance_records columns)
+- [x] Implemented ShiftTemplate, EmployeeShiftAssignment, ShiftRoster, ShiftChangeRequest, ShiftAssignmentHistory JPA entities & repositories
+- [x] Shift template CRUD with unique code constraint per tenant and JSON weekly off days validation
+- [x] Overnight shift duration calculation and IANA timezone + DST spring-forward/fall-back arithmetic
+- [x] Employee shift assignments with interval overlap detection for bounded and open-ended ranges
+- [x] Bulk assignment endpoint with skipConflicting support and immutable audit history
+- [x] Roster generation in DRAFT status with weekly off detection, publish, and cancellation workflows
+- [x] Employee shift change requests with reason, manager review, and self-approval prevention
+- [x] Split shifts and multi-session check-ins on same date using sequential session_number discriminator
+- [x] Shift policy snapshot preservation on attendance records (immutable historical baseline)
+- [x] Verified full regression test suite (mvn clean test PASSED: 32/32 clean tests)
+- [x] Created docs/PHASE_1G_SHIFT_MANAGEMENT.md
+
+### Phase 1H: Leave Management Engine (Upcoming)
+- [ ] Leave types and policy configuration (annual, sick, casual, maternity, comp-off)
+- [ ] Leave balance accrual, carry-forward, and lapse rules
+- [ ] Leave application, document attachment, and manager approval workflows
+- [ ] Leave calendar, sandwich leave policies, and attendance integration
 
 ---
 
@@ -93,3 +108,4 @@ pm run build)
   - Completed Phase 1A architecture audit, Phase 1B schema refactor, Phase 1C secure JWT authentication, and Phase 1D company onboarding.
   - Implemented Phase 1E: Employee data architecture (V4__employee_management_schema.sql), employee CRUD, multi-criteria filtering, document metadata, audit history tracking, and identity masking. Verified test suite with 21/21 tests passing.
   - Implemented Phase 1F: Attendance & Geofencing Engine (V5__attendance_engine_schema.sql), Haversine GPS geofencing, selfie audit metadata, break management, and attendance corrections. Verified test suite with 24/24 tests passing.
+  - Implemented Phase 1G: Shift Management & Scheduling Engine (V6__shift_management_schema.sql), overnight & DST calculations, interval overlap conflict detection, draft roster publishing, shift change requests, and multi-session attendance integration. Verified regression suite with 32/32 tests passing.

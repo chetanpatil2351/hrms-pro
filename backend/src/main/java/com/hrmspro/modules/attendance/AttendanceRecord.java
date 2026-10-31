@@ -76,4 +76,51 @@ public class AttendanceRecord extends BaseTenantEntity {
     @Builder.Default
     @OneToMany(mappedBy = "attendanceRecord", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<AttendanceBreak> breaks = new ArrayList<>();
+
+    // --- Phase 1G: Shift integration fields (additive, nullable for historical records) ---
+
+    /**
+     * Session discriminator for split-shift / multiple daily check-in sessions.
+     * Default = 1 for all single-session employees.
+     * Allocated atomically using a pessimistic lock query in AttendanceService.
+     */
+    @Builder.Default
+    @Column(name = "session_number", nullable = false)
+    private Integer sessionNumber = 1;
+
+    /**
+     * FK to the shift assignment active on this attendance_date.
+     * Null for records created before Phase 1G (historical) or for unscheduled employees.
+     */
+    @Column(name = "assigned_shift_id")
+    private java.util.UUID assignedShiftId;
+
+    /**
+     * JSON snapshot of shift template at check-in time.
+     * Immutable — never overwritten if the parent shift template changes.
+     */
+    @Column(name = "shift_snapshot", columnDefinition = "TEXT")
+    private String shiftSnapshot;
+
+    /** Pre-computed scheduled start in UTC at check-in time (snapshot). */
+    @Column(name = "scheduled_start_utc")
+    private Instant scheduledStartUtc;
+
+    /** Pre-computed scheduled end in UTC at check-in time (accounts for overnight). */
+    @Column(name = "scheduled_end_utc")
+    private Instant scheduledEndUtc;
+
+    /** Snapshot of total scheduled working minutes from shift template. */
+    @Column(name = "scheduled_work_minutes")
+    private Integer scheduledWorkMinutes;
+
+    /** Minutes late beyond grace period; 0 when on time or no shift assigned. */
+    @Builder.Default
+    @Column(name = "late_by_minutes")
+    private Integer lateByMinutes = 0;
+
+    /** Minutes of early departure before scheduled end; 0 when departed on time. */
+    @Builder.Default
+    @Column(name = "early_departure_by_minutes")
+    private Integer earlyDepartureByMinutes = 0;
 }
