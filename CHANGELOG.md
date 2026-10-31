@@ -11,11 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Architecture audit document docs/PHASE_1A_ARCHITECTURE_AUDIT.md.
 - Phase 1B schema refactoring migration V2__multi_tenant_rbac_schema.sql and JPA entities.
 - Phase 1C Authentication and JWT Token Lifecycle (docs/PHASE_1C_AUTHENTICATION.md).
-- Phase 1D Company Onboarding & Tenant Management (docs/PHASE_1D_COMPANY_ONBOARDING.md):
-  - Flyway migration V3__tenant_management_and_invitations.sql.
-  - Company onboarding endpoint: creator automatically becomes COMPANY_ADMIN and provisions initial Head Office branch.
-  - Company profile management (GET /tenants/current, PUT /tenants/current, GET /tenants/my-companies).
-  - Branch & Department management APIs with cross-tenant isolation enforcement.
-  - Secure member invitation foundation with single-use cryptographic tokens.
-  - Subscription capacity and max employee limit checks.
-  - Automated test suite CompanyOnboardingAndManagementTests passing 100%.
+- Phase 1D Company Onboarding & Tenant Management (docs/PHASE_1D_COMPANY_ONBOARDING.md).
+- Phase 1E Employee Management & Profiles (docs/PHASE_1E_EMPLOYEE_MANAGEMENT.md):
+  - Flyway migration V4__employee_management_schema.sql with default-deny RLS on employees, employee_documents, and employee_audit_logs.
+  - JPA entities: Employee, EmployeeDocument, EmployeeAuditLog.
+  - Concurrent-safe unique employee code generation scoped per tenant.
+  - Sensitive identity masking (PAN, Aadhaar) on retrieval.
+  - Strict tenant boundary checks on branch, department, and reporting manager assignments.
+  - Comprehensive Employee APIs: listing with pagination/search/filtering, self profile /me, status modification, document metadata tracking, and audit history.
+  - Automated test suite EmployeeManagementTests passing 100% (21/21 tests passed across all modules).
