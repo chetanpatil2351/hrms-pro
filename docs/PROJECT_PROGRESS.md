@@ -69,12 +69,21 @@ pm run build)
 - [x] Verified full test suite (mvn clean test PASSED: 21/21 clean tests)
 - [x] Created docs/PHASE_1E_EMPLOYEE_MANAGEMENT.md
 
-### Phase 1F: Attendance & Geofencing Engine (Upcoming)
-- [ ] Shift management and scheduling models
-- [ ] Daily attendance log (Check-in, Check-out, duration calculation)
-- [ ] GPS geofencing validation and branch coordinates
-- [ ] Selfie attendance metadata and storage linkage
-- [ ] QR code attendance generation and validation
+### Phase 1F: Attendance & Geofencing Engine
+- [x] Created V5__attendance_engine_schema.sql (attendance_locations, attendance_records, attendance_events, attendance_breaks, attendance_corrections with FORCE RLS)
+- [x] Implemented AttendanceLocation, AttendanceRecord, AttendanceEvent, AttendanceBreak, AttendanceCorrection JPA entities & repositories
+- [x] Haversine GPS geofence validation engine supporting STRICT and FLAG_OUTSIDE policy modes
+- [x] Break tracking and net work duration computation with PRESENT, HALF_DAY, and INCOMPLETE classification
+- [x] Attendance punch correction request, approval, and rejection workflow with audit trail
+- [x] Implemented Attendance REST APIs: /check-in, /check-out, /me/today, /me/history, /breaks/start, /breaks/end, /corrections, /corrections/{id}/review
+- [x] Verified full test suite (mvn clean test PASSED: 24/24 clean tests)
+- [x] Created docs/PHASE_1F_ATTENDANCE_ENGINE.md
+
+### Phase 1G: Shift Management & Scheduling (Upcoming)
+- [ ] Shift configuration and policy models (rotational, flexible, split shifts)
+- [ ] Shift assignment and employee scheduling
+- [ ] Grace periods, late-mark, and early-exit calculation engine
+- [ ] Overtime and comp-off calculation rules
 
 ---
 
@@ -83,3 +92,4 @@ pm run build)
   - Initialized Git repository, configured root .gitignore, and set up master documentation files.
   - Completed Phase 1A architecture audit, Phase 1B schema refactor, Phase 1C secure JWT authentication, and Phase 1D company onboarding.
   - Implemented Phase 1E: Employee data architecture (V4__employee_management_schema.sql), employee CRUD, multi-criteria filtering, document metadata, audit history tracking, and identity masking. Verified test suite with 21/21 tests passing.
+  - Implemented Phase 1F: Attendance & Geofencing Engine (V5__attendance_engine_schema.sql), Haversine GPS geofencing, selfie audit metadata, break management, and attendance corrections. Verified test suite with 24/24 tests passing.

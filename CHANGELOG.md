@@ -20,3 +20,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Strict tenant boundary checks on branch, department, and reporting manager assignments.
   - Comprehensive Employee APIs: listing with pagination/search/filtering, self profile /me, status modification, document metadata tracking, and audit history.
   - Automated test suite EmployeeManagementTests passing 100% (21/21 tests passed across all modules).
+- Phase 1F Attendance & Geofencing Engine (docs/PHASE_1F_ATTENDANCE_ENGINE.md):
+  - Flyway migration V5__attendance_engine_schema.sql with default-deny RLS on attendance_locations, attendance_records, attendance_events, attendance_breaks, and attendance_corrections.
+  - JPA entities: AttendanceLocation, AttendanceRecord, AttendanceEvent, AttendanceBreak, AttendanceCorrection.
+  - Haversine GPS geofence validation engine with STRICT and FLAG_OUTSIDE enforcement modes.
+  - Selfie metadata verification and audit trail logging per punch.
+  - Break session tracking with start/end timestamps and net working duration calculation.
+  - Punch correction request and review/approval workflow.
+  - REST endpoints for locations, check-in, check-out, break sessions, and attendance corrections.
+  - Full test suite verified with 100% pass rate (24/24 clean tests passing).
