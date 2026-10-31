@@ -21,10 +21,21 @@
 - [x] Backend skeleton initialization (ackend/ with Maven, Spring Boot 3.3.4, Java 21)
 - [x] Base configuration & shared models (BaseEntity, BaseTenantEntity, ApiResponse, GlobalExceptionHandler)
 - [x] Clean test compilation and Spring Boot Context verification (mvn clean test PASSED)
-- [x] Flyway schema V1 initialization (	enants, users, efresh_tokens, PostgreSQL RLS policies)
 - [x] Web frontend scaffold (web/ with React, Vite, Tailwind CSS, TypeScript, Axios, Lucide, Recharts - verified 
 pm run build)
 - [x] Mobile frontend scaffold (mobile/ with Expo SDK, React Native TypeScript, Axios, SecureStore, Location, Camera, SQLite)
+
+### Phase 1A: Architecture & PostgreSQL Security Audit
+- [x] Comprehensive database schema audit (User identity vs. Tenant decoupling)
+- [x] PostgreSQL RLS policy inspection and default-deny remediation design
+- [x] HikariCP session variable leakage mitigation strategy (transaction-local set_config with local scope)
+- [x] Authentication & token lifecycle design (Argon2/BCrypt, short-lived JWT, family-based refresh token rotation & reuse detection)
+- [x] Created docs/PHASE_1A_ARCHITECTURE_AUDIT.md
+
+### Phase 1B: Multi-Tenant RBAC Schema Refactor (Upcoming)
+- [ ] Flyway schema refactor (pp_users, 	enants, 	enant_memberships, oles, permissions, membership_roles, ranches, departments)
+- [ ] Update JPA entity models to reflect decoupled memberships and branches
+- [ ] Enforce FORCE ROW LEVEL SECURITY with non-leaking transaction policies
 
 ---
 
@@ -33,6 +44,6 @@ pm run build)
   - Initialized Git repository, configured root .gitignore, and set up master documentation files.
   - Initialized ackend/ with Spring Boot 3.3.4, Java 21, Spring Data JPA, Flyway PostgreSQL, and JJWT.
   - Implemented common architecture: BaseEntity, BaseTenantEntity, ApiResponse<T>, ResourceNotFoundException, and GlobalExceptionHandler.
-  - Created Flyway migration V1__init_schema.sql covering Tenants, Users, Refresh Tokens, and PostgreSQL Row-Level Security policies.
   - Scaffolding of web/ with Vite React TypeScript, Tailwind CSS, Axios, Lucide React, and verified production build.
   - Scaffolding of mobile/ with Expo TypeScript, SecureStore, Camera, Location, and SQLite.
+  - Completed Phase 1A architecture and security audit; generated docs/PHASE_1A_ARCHITECTURE_AUDIT.md.
