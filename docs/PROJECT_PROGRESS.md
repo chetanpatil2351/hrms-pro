@@ -39,12 +39,22 @@ pm run build)
 - [x] Added automated tests in MultiTenantSchemaAndRbacTests (mvn clean test PASSED: 4/4 tests clean)
 - [x] Created docs/PHASE_1B_DATABASE_IMPLEMENTATION.md
 
-### Phase 1C: Authentication & Tenant Security (Upcoming)
-- [ ] BCrypt / Argon2 password encoder configuration
-- [ ] JWT token provider (access tokens, claims with tenant & roles)
-- [ ] Refresh token rotation service with family reuse detection
-- [ ] TenantContextFilter & Spring Security authentication filter
-- [ ] Auth endpoints (/api/v1/auth/login, /register, /refresh, /switch-tenant, /me)
+### Phase 1C: Secure Authentication, JWT & Tenant Context
+- [x] Implemented JwtService (HMAC-SHA256, 15m expiration, token claims with user, tenant, membership & roles)
+- [x] Implemented BCrypt password hashing (strength 12)
+- [x] Implemented family-based refresh token rotation, SHA-256 token hashing, and replay attack reuse detection
+- [x] Implemented Spring Security stateless filter chain (SecurityConfig, JwtAuthenticationFilter, UserPrincipal)
+- [x] Implemented transaction-local PostgreSQL RLS context injector (TenantContextAspect via SELECT set_config('app.current_tenant_id', :tenantId, true))
+- [x] Implemented Auth endpoints in AuthController (/register, /login, /refresh, /logout, /switch-tenant, /memberships, /me)
+- [x] Added automated tests in AuthenticationAndTenantContextTests (mvn clean test PASSED: 10/10 tests clean)
+- [x] Created docs/PHASE_1C_AUTHENTICATION.md
+
+### Phase 1D: Company Onboarding & Tenant Management (Upcoming)
+- [ ] Company registration and onboarding workflow
+- [ ] Subdomain uniqueness and validation
+- [ ] Automatic Company Admin membership assignment
+- [ ] Initial branch and department provisioning
+- [ ] Subscription plan and employee limit enforcement
 
 ---
 
@@ -54,3 +64,4 @@ pm run build)
   - Initialized ackend/ with Spring Boot 3.3.4, Java 21, Spring Data JPA, Flyway PostgreSQL, and JJWT.
   - Completed Phase 1A architecture and security audit; generated docs/PHASE_1A_ARCHITECTURE_AUDIT.md.
   - Implemented Phase 1B schema refactor (V2__multi_tenant_rbac_schema.sql), decoupled entities (AppUser, TenantMembership, Branch, Department, Role, Permission, RefreshToken), and executed automated test suite (MultiTenantSchemaAndRbacTests) with 100% pass rate.
+  - Implemented Phase 1C Authentication and Tenant Context engine (JwtService, SecurityConfig, TenantContextAspect, AuthService, AuthController). Verified all 10 unit and integration tests cleanly passing with zero warnings.

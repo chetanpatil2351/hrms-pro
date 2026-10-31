@@ -9,12 +9,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Repository initialization with Git and root .gitignore.
 - Full-stack monorepo scaffolding (backend, web, mobile).
 - Architecture audit document docs/PHASE_1A_ARCHITECTURE_AUDIT.md.
-- Phase 1B schema refactoring migration V2__multi_tenant_rbac_schema.sql:
-  - Decoupled pp_users global identity from company tenancy.
-  - 	enant_memberships supporting multiple companies per user with distinct roles and statuses.
-  - Granular RBAC tables (oles, permissions, membership_roles, ole_permissions).
-  - Hierarchical ranches and departments.
-  - Modern efresh_tokens table with token families, rotation, and reuse detection.
-  - Strict default-deny PostgreSQL Row Level Security (RLS) policies with FORCE ROW LEVEL SECURITY.
-- JPA entities and repositories for all new tenancy and RBAC models.
-- Automated tests in MultiTenantSchemaAndRbacTests validating multi-tenancy constraints and token rotation.
+- Multi-tenant RBAC schema refactoring migration V2__multi_tenant_rbac_schema.sql and JPA entities.
+- Phase 1C Secure Authentication & Tenant Context:
+  - Spring Security stateless filter chain with JwtAuthenticationFilter.
+  - BCrypt password hashing (strength 12).
+  - Short-lived HMAC-SHA256 JWT access tokens (15 mins) with 	enant_id, membership_id, and oles.
+  - Opaque refresh tokens stored as SHA-256 hashes with family tracking, rotation, and replay detection.
+  - Dynamic tenant switching endpoint /api/v1/auth/switch-tenant.
+  - Transaction-local PostgreSQL RLS setter via TenantContextAspect (set_config('app.current_tenant_id', ..., true)).
+  - Auth REST controller: /register, /login, /refresh, /logout, /switch-tenant, /memberships, /me.
+  - Verified test suite: 10/10 tests passed (AuthenticationAndTenantContextTests, MultiTenantSchemaAndRbacTests).
