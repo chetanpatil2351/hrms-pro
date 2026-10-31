@@ -9,13 +9,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Repository initialization with Git and root .gitignore.
 - Full-stack monorepo scaffolding (backend, web, mobile).
 - Architecture audit document docs/PHASE_1A_ARCHITECTURE_AUDIT.md.
-- Multi-tenant RBAC schema refactoring migration V2__multi_tenant_rbac_schema.sql and JPA entities.
-- Phase 1C Secure Authentication & Tenant Context:
-  - Spring Security stateless filter chain with JwtAuthenticationFilter.
-  - BCrypt password hashing (strength 12).
-  - Short-lived HMAC-SHA256 JWT access tokens (15 mins) with 	enant_id, membership_id, and oles.
-  - Opaque refresh tokens stored as SHA-256 hashes with family tracking, rotation, and replay detection.
-  - Dynamic tenant switching endpoint /api/v1/auth/switch-tenant.
-  - Transaction-local PostgreSQL RLS setter via TenantContextAspect (set_config('app.current_tenant_id', ..., true)).
-  - Auth REST controller: /register, /login, /refresh, /logout, /switch-tenant, /memberships, /me.
-  - Verified test suite: 10/10 tests passed (AuthenticationAndTenantContextTests, MultiTenantSchemaAndRbacTests).
+- Phase 1B schema refactoring migration V2__multi_tenant_rbac_schema.sql and JPA entities.
+- Phase 1C Authentication and JWT Token Lifecycle (docs/PHASE_1C_AUTHENTICATION.md).
+- Phase 1D Company Onboarding & Tenant Management (docs/PHASE_1D_COMPANY_ONBOARDING.md):
+  - Flyway migration V3__tenant_management_and_invitations.sql.
+  - Company onboarding endpoint: creator automatically becomes COMPANY_ADMIN and provisions initial Head Office branch.
+  - Company profile management (GET /tenants/current, PUT /tenants/current, GET /tenants/my-companies).
+  - Branch & Department management APIs with cross-tenant isolation enforcement.
+  - Secure member invitation foundation with single-use cryptographic tokens.
+  - Subscription capacity and max employee limit checks.
+  - Automated test suite CompanyOnboardingAndManagementTests passing 100%.

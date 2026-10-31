@@ -18,6 +18,9 @@ public class Tenant extends BaseEntity {
     @Column(nullable = false)
     private String name;
 
+    @Column(name = "legal_name")
+    private String legalName;
+
     @Column(nullable = false, unique = true, length = 100)
     private String subdomain;
 
@@ -30,9 +33,41 @@ public class Tenant extends BaseEntity {
     @Column(length = 50)
     private String phone;
 
+    @Column(columnDefinition = "TEXT")
+    private String address;
+
+    @Column(length = 100)
+    private String city;
+
+    @Column(length = 100)
+    private String state;
+
+    @Builder.Default
+    @Column(length = 100)
+    private String country = "India";
+
+    @Column(name = "postal_code", length = 20)
+    private String postalCode;
+
+    @Column(length = 100)
+    private String industry;
+
+    private String website;
+
+    @Column(name = "logo_url", columnDefinition = "TEXT")
+    private String logoUrl;
+
+    @Builder.Default
+    @Column(length = 50)
+    private String timezone = "Asia/Kolkata";
+
     @Builder.Default
     @Column(name = "subscription_plan", nullable = false, length = 50)
     private String subscriptionPlan = "FREE_TRIAL";
+
+    @Builder.Default
+    @Column(name = "subscription_status", length = 50)
+    private String subscriptionStatus = "TRIAL"; // TRIAL, ACTIVE, EXPIRED, SUSPENDED
 
     @Builder.Default
     @Column(name = "max_employees", nullable = false)

@@ -49,19 +49,25 @@ pm run build)
 - [x] Added automated tests in AuthenticationAndTenantContextTests (mvn clean test PASSED: 10/10 tests clean)
 - [x] Created docs/PHASE_1C_AUTHENTICATION.md
 
-### Phase 1D: Company Onboarding & Tenant Management (Upcoming)
-- [ ] Company registration and onboarding workflow
-- [ ] Subdomain uniqueness and validation
-- [ ] Automatic Company Admin membership assignment
-- [ ] Initial branch and department provisioning
-- [ ] Subscription plan and employee limit enforcement
+### Phase 1D: Company Onboarding & Tenant Management
+- [x] Created V3__tenant_management_and_invitations.sql (expanded company fields, tenant_invitations, RLS policies)
+- [x] Implemented company onboarding with automatic COMPANY_ADMIN assignment and default Head Office branch creation
+- [x] Implemented Branch management APIs (POST, GET, GET by id, PUT, PATCH status)
+- [x] Implemented Department management APIs (POST, GET, GET by id, PUT, PATCH status) with cross-tenant branch rejection
+- [x] Implemented Member invitation foundation (cryptographic token, SHA-256 hashing, 7-day expiry, single-use acceptance)
+- [x] Implemented Subscription capacity and employee limit enforcement
+- [x] Added automated tests in CompanyOnboardingAndManagementTests (mvn clean test PASSED: 16/16 tests clean)
+- [x] Created docs/PHASE_1D_COMPANY_ONBOARDING.md
+
+### Phase 1E: Employee Management & Profiles (Upcoming)
+- [ ] Employee profile management (personal, professional, bank, statutory details)
+- [ ] Employee document storage metadata
+- [ ] Emergency contacts and job history
 
 ---
 
 ## Log of Changes
 - **2026-10-31**:
   - Initialized Git repository, configured root .gitignore, and set up master documentation files.
-  - Initialized ackend/ with Spring Boot 3.3.4, Java 21, Spring Data JPA, Flyway PostgreSQL, and JJWT.
-  - Completed Phase 1A architecture and security audit; generated docs/PHASE_1A_ARCHITECTURE_AUDIT.md.
-  - Implemented Phase 1B schema refactor (V2__multi_tenant_rbac_schema.sql), decoupled entities (AppUser, TenantMembership, Branch, Department, Role, Permission, RefreshToken), and executed automated test suite (MultiTenantSchemaAndRbacTests) with 100% pass rate.
-  - Implemented Phase 1C Authentication and Tenant Context engine (JwtService, SecurityConfig, TenantContextAspect, AuthService, AuthController). Verified all 10 unit and integration tests cleanly passing with zero warnings.
+  - Completed Phase 1A architecture audit, Phase 1B multi-tenant schema refactor, and Phase 1C secure JWT authentication.
+  - Implemented Phase 1D: Company Onboarding, Branch & Department management, cryptographically secured invitations, capacity checks, and company profile updating. Executed full test suite with 16/16 clean tests passing.
