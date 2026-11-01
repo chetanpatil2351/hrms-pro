@@ -62,6 +62,12 @@ public class PayrollService {
                 .wageCeiling(dto.getWageCeiling())
                 .minimumWageThreshold(dto.getMinimumWageThreshold() != null ? dto.getMinimumWageThreshold() : BigDecimal.ZERO)
                 .isActive(dto.getIsActive() != null ? dto.getIsActive() : true)
+                .effectiveFrom(dto.getEffectiveFrom() != null ? dto.getEffectiveFrom() : LocalDate.of(1970, 1, 1))
+                .effectiveTo(dto.getEffectiveTo())
+                .jurisdiction(dto.getJurisdiction() != null ? dto.getJurisdiction() : "ALL")
+                .sourceReference(dto.getSourceReference())
+                .ruleVersion(dto.getRuleVersion())
+                .disabilityCeiling(dto.getDisabilityCeiling())
                 .build();
         rule.setTenantId(tenantId);
         rule = statutoryRuleRepository.save(rule);
@@ -383,6 +389,9 @@ public class PayrollService {
 
     public List<PayslipDto> getEmployeePayslips(UUID employeeId) {
         UUID tenantId = getRequiredTenantId();
+        if (employeeRepository.findByIdAndTenantId(employeeId, tenantId).isEmpty()) {
+            throw new ResourceNotFoundException("Employee not found for current tenant: " + employeeId);
+        }
         return payslipRepository.findByTenantIdAndEmployeeIdOrderByIssueDateDesc(tenantId, employeeId)
                 .stream()
                 .map(this::toPayslipDto)
@@ -409,6 +418,12 @@ public class PayrollService {
                 .wageCeiling(r.getWageCeiling())
                 .minimumWageThreshold(r.getMinimumWageThreshold())
                 .isActive(r.getIsActive())
+                .effectiveFrom(r.getEffectiveFrom())
+                .effectiveTo(r.getEffectiveTo())
+                .jurisdiction(r.getJurisdiction())
+                .sourceReference(r.getSourceReference())
+                .ruleVersion(r.getRuleVersion())
+                .disabilityCeiling(r.getDisabilityCeiling())
                 .build();
     }
 

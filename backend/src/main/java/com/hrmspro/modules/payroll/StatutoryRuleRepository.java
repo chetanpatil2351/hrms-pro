@@ -8,6 +8,7 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.time.LocalDate;
 
 @Repository
 public interface StatutoryRuleRepository extends JpaRepository<StatutoryRule, UUID> {
@@ -30,4 +31,21 @@ public interface StatutoryRuleRepository extends JpaRepository<StatutoryRule, UU
     );
 
     List<StatutoryRule> findByTenantIdAndEffectiveYear(UUID tenantId, Integer effectiveYear);
+
+    @Query("""
+        SELECT s FROM StatutoryRule s
+        WHERE s.tenantId = :tenantId
+          AND s.ruleType = :ruleType
+          AND (:state IS NULL OR s.state = :state)
+          AND s.effectiveFrom <= :date
+          AND (s.effectiveTo IS NULL OR s.effectiveTo >= :date)
+          AND s.isActive = true
+        ORDER BY s.effectiveFrom DESC
+    """)
+    Optional<StatutoryRule> findApplicableRuleByDate(
+            @Param("tenantId") UUID tenantId,
+            @Param("ruleType") String ruleType,
+            @Param("state") String state,
+            @Param("date") LocalDate date);
+
 }

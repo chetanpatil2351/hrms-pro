@@ -8,6 +8,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.UUID;
 
 @Data
@@ -27,4 +28,13 @@ public class StatutoryRuleDto {
     private BigDecimal minimumWageThreshold;
     @Builder.Default
     private Boolean isActive = true;
+    // New effective‑dated fields
+    @NotNull(message = "Effective from date required")
+    private LocalDate effectiveFrom;
+    private LocalDate effectiveTo;
+    @NotBlank(message = "Jurisdiction required")
+    private String jurisdiction;
+    private String sourceReference;
+    private String ruleVersion;
+    private BigDecimal disabilityCeiling;
 }
