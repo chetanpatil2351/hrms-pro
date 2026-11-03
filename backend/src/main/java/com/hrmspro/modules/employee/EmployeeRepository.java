@@ -1,3 +1,4 @@
+
 package com.hrmspro.modules.employee;
 
 import org.springframework.data.domain.Page;
@@ -38,12 +39,13 @@ public interface EmployeeRepository extends JpaRepository<Employee, UUID> {
         AND (:branchId IS NULL OR e.branch.id = :branchId)
         AND (:departmentId IS NULL OR e.department.id = :departmentId)
         AND (:employmentStatus IS NULL OR e.employmentStatus = :employmentStatus)
-        AND (:search IS NULL OR (
+        AND (
+            :search = '' OR
             LOWER(e.firstName) LIKE LOWER(CONCAT('%', :search, '%')) OR
             LOWER(e.lastName) LIKE LOWER(CONCAT('%', :search, '%')) OR
             LOWER(e.employeeCode) LIKE LOWER(CONCAT('%', :search, '%')) OR
             LOWER(e.workEmail) LIKE LOWER(CONCAT('%', :search, '%'))
-        ))
+        )
     """)
     Page<Employee> findEmployeesWithFilters(
             @Param("tenantId") UUID tenantId,

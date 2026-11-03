@@ -125,20 +125,33 @@ CREATE TABLE IF NOT EXISTS membership_roles (
 );
 
 -- 6. Safe Data Migration from legacy 'users' table if populated
-DO 
+DO $$
 BEGIN
-    IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'users') THEN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = 'users'
+    ) THEN
+
         -- Insert distinct users into app_users
-        INSERT INTO app_users (id, email, phone, password_hash, first_name, last_name, is_active, is_email_verified, created_at, updated_at)
-        SELECT DISTINCT ON (email) 
-            id, email, phone, password_hash, first_name, last_name, is_active, is_email_verified, created_at, updated_at
+        INSERT INTO app_users (
+            id, email, phone, password_hash, first_name, last_name,
+            is_active, is_email_verified, created_at, updated_at
+        )
+        SELECT DISTINCT ON (email)
+            id, email, phone, password_hash, first_name, last_name,
+            is_active, is_email_verified, created_at, updated_at
         FROM users
+        ORDER BY email, created_at
         ON CONFLICT (email) DO NOTHING;
 
         -- Create memberships for existing users
-        INSERT INTO tenant_memberships (id, user_id, tenant_id, status, created_at, updated_at)
-        SELECT 
-            u.id, -- preserve legacy id as membership id for continuity where possible
+        INSERT INTO tenant_memberships (
+            id, user_id, tenant_id, status, created_at, updated_at
+        )
+        SELECT
+            u.id,
             au.id,
             u.tenant_id,
             'ACTIVE',
@@ -148,16 +161,22 @@ BEGIN
         JOIN app_users au ON au.email = u.email
         ON CONFLICT (user_id, tenant_id) DO NOTHING;
 
-        -- Map legacy string roles to membership_roles
+        -- Map legacy roles to membership_roles
         INSERT INTO membership_roles (membership_id, role_id)
         SELECT tm.id, r.id
         FROM users u
         JOIN app_users au ON au.email = u.email
-        JOIN tenant_memberships tm ON tm.user_id = au.id AND tm.tenant_id = u.tenant_id
-        JOIN roles r ON r.name = u.role AND r.tenant_id IS NULL
+        JOIN tenant_memberships tm
+            ON tm.user_id = au.id
+           AND tm.tenant_id = u.tenant_id
+        JOIN roles r
+            ON r.name = u.role
+           AND r.tenant_id IS NULL
         ON CONFLICT DO NOTHING;
+
     END IF;
-END ;
+END;
+$$;
 
 -- 7. Modernized Refresh Tokens Table
 -- Drops legacy refresh_tokens safely and recreates with token family & reuse detection attributes

@@ -192,48 +192,46 @@ public class SalaryStructureService {
         SalaryStructure previousStructure = currentAssignments.isEmpty() ? null : currentAssignments.get(0).getSalaryStructure();
         BigDecimal previousCtc = currentAssignments.isEmpty() ? null : currentAssignments.get(0).getAnnualCtc();
 
-        // Build assignment entity and ensure unique identifiers
-        EmployeeSalaryStructure assignment = EmployeeSalaryStructure.builder()
-                .employee(employee)
-                .salaryStructure(structure)
-                .version(nextVersion)
-                .effectiveFrom(dto.getEffectiveFrom())
-                .effectiveTo(dto.getEffectiveTo())
-                .annualCtc(dto.getAnnualCtc())
-                .monthlyGross(monthlyGross)
-                .monthlyBaseSalary(monthlyBase)
-                .isActive(true)
-                .build();
-        // Set tenant context and persist
-        // assignment.setTenantId(tenantId);
-        // assignment = employeeSalaryStructureRepository.save(assignment);
-        assignment.setTenantId(tenantId);
+        // Build assignment entity
+EmployeeSalaryStructure assignment = EmployeeSalaryStructure.builder()
+        .employee(employee)
+        .salaryStructure(structure)
+        .version(nextVersion)
+        .effectiveFrom(dto.getEffectiveFrom())
+        .effectiveTo(dto.getEffectiveTo())
+        .annualCtc(dto.getAnnualCtc())
+        .monthlyGross(monthlyGross)
+        .monthlyBaseSalary(monthlyBase)
+        .isActive(true)
+        .build();
 
-        ========== SALARY ASSIGNMENT DEBUG ==========
-        System.out.println("ID BEFORE SAVE: " + assignment.getId());
-        System.out.println("EMPLOYEE ID: " + employee.getId());
-        System.out.println("TENANT ID: " + tenantId);
+assignment.setTenantId(tenantId);
 
-        assignment = employeeSalaryStructureRepository.saveAndFlush(assignment);
-        System.out.println("ID AFTER SAVE: " + assignment.getId());
-        System.out.println("============================================\n");
-        
-        // Record Revision History with its own fresh UUID
-        AppUser revisedBy = currentUserId != null ? appUserRepository.findById(currentUserId).orElse(null) : null;
-        SalaryRevisionHistory revision = SalaryRevisionHistory.builder()
-                .employee(employee)
-                .previousStructure(previousStructure)
-                .newStructure(structure)
-                .previousAnnualCtc(previousCtc)
-                .newAnnualCtc(dto.getAnnualCtc())
-                .revisionDate(dto.getEffectiveFrom())
-                .revisionReason(dto.getRevisionReason() != null ? dto.getRevisionReason() : "Salary assignment / revision")
-                .revisedBy(revisedBy)
-                .build();
-        revision.setTenantId(tenantId);
-        revisionHistoryRepository.save(revision);
+// Save assignment
+assignment = employeeSalaryStructureRepository.saveAndFlush(assignment);
 
-        return toEmployeeSalaryStructureDto(assignment);
+// Record revision history
+AppUser revisedBy = currentUserId != null
+        ? appUserRepository.findById(currentUserId).orElse(null)
+        : null;
+
+SalaryRevisionHistory revision = SalaryRevisionHistory.builder()
+        .employee(employee)
+        .previousStructure(previousStructure)
+        .newStructure(structure)
+        .previousAnnualCtc(previousCtc)
+        .newAnnualCtc(dto.getAnnualCtc())
+        .revisionDate(dto.getEffectiveFrom())
+        .revisionReason(dto.getRevisionReason() != null
+        ? dto.getRevisionReason()
+        : "Salary assignment / revision")
+        .revisedBy(revisedBy)
+        .build();
+
+revision.setTenantId(tenantId);
+revisionHistoryRepository.save(revision);
+
+return toEmployeeSalaryStructureDto(assignment);
     }
 
     public List<EmployeeSalaryStructureDto> getEmployeeSalaryHistory(UUID employeeId) {

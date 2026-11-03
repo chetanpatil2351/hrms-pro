@@ -153,6 +153,7 @@ public class EmployeeService {
         return mapToEmployeeResponse(employee);
     }
 
+
     @Transactional(readOnly = true)
     public Page<EmployeeResponseDto> getEmployees(
             UUID tenantId,
@@ -162,15 +163,18 @@ public class EmployeeService {
             String search,
             Pageable pageable
     ) {
+        String safeSearch = search == null ? "" : search.trim();
+
         return employeeRepository.findEmployeesWithFilters(
                 tenantId,
                 branchId,
                 departmentId,
                 employmentStatus,
-                search,
+                safeSearch,
                 pageable
         ).map(this::mapToEmployeeResponse);
     }
+
 
     @Transactional(readOnly = true)
     public EmployeeResponseDto getEmployeeById(UUID tenantId, UUID employeeId) {

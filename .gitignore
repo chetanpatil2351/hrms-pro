@@ -1,62 +1,22 @@
-﻿# Environment & Secrets
-.env
-.env.local
-.env.*.local
-*.env
-*.pem
-*.key
-*.p12
-*.pfx
-secrets.yaml
-
-# Java & Maven
-target/
-pom.xml.tag
-pom.xml.releaseBackup
-pom.xml.versionsBackup
-pom.xml.next
-release.properties
-dependency-reduced-pom.xml
-buildNumber.properties
-.mvn/timing.properties
-.mvn/wrapper/maven-wrapper.jar
-
-# Node & Package Managers
+﻿# Dependencies and build output
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
-.pnpm-debug.log*
-dist/
-dist-ssr/
-*.local
+**/node_modules/
+backend/target/
+web/dist/
+mobile/.expo/
 
-# Expo & React Native
-.expo/
-web-build/
-.output/
-android/
-ios/
+# Environment secrets
+.env
+.env.*
+!.env.example
 
-# IDE & Editors
+# Logs and debug output
+*.log
+backend/postgres-error.txt
+backend/test-output.txt
+
+# IDE and OS
 .idea/
-*.iml
-*.iws
-*.ipr
 .vscode/
-!.vscode/extensions.json
-!.vscode/settings.json
-.settings/
-.project
-.classpath
-*.sublime-project
-*.sublime-workspace
 .DS_Store
 Thumbs.db
-
-# Logs & Temp
-logs/
-*.log
-scratch/
-tmp/

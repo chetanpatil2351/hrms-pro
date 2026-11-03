@@ -1,5 +1,5 @@
 -- Enable UUID generation extension if not already present
-CREATE EXTENSION IF NOT EXISTS ""pgcrypto"";
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- 1. Tenants / Companies Table
 CREATE TABLE IF NOT EXISTS tenants (
