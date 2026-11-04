@@ -10,4 +10,5 @@ import java.util.UUID;
 public interface DepartmentRepository extends JpaRepository<Department, UUID> {
     List<Department> findByTenantId(UUID tenantId);
     List<Department> findByBranchId(UUID branchId);
+    long countByTenantId(UUID tenantId);
 }

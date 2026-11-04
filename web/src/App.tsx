@@ -14,10 +14,20 @@ import {
   updateEmployee,
   getBranches,
   getDepartments,
+  getEmployeeStats,
+  activateEmployee,
+  deactivateEmployee,
+  getEmployeeDocuments,
+  uploadEmployeeDocument,
+  downloadEmployeeDocument,
+  getEmployeeHistory,
   type Employee,
   type CreateEmployeeRequest,
   type UpdateEmployeeRequest,
   type OrganizationOption,
+  type EmployeeStats,
+  type EmployeeDocument,
+  type EmployeeAuditLog,
 } from './services/employeeService';
 import './App.css';
 
@@ -39,6 +49,23 @@ function App() {
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [currentPage, setCurrentPage] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [totalEmployees, setTotalEmployees] = useState(0);
+  const [stats, setStats] = useState<EmployeeStats | null>(null);
+
+  // Profile Sub-features
+  const [profileTab, setProfileTab] = useState<'details' | 'documents' | 'history'>('details');
+  const [documents, setDocuments] = useState<EmployeeDocument[]>([]);
+  const [history, setHistory] = useState<EmployeeAuditLog[]>([]);
+  const [uploadDocType, setUploadDocType] = useState('RESUME');
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [docLoading, setDocLoading] = useState(false);
+  const [actionSuccess, setActionSuccess] = useState('');
+
+  const [branchFilter, setBranchFilter] = useState('');
+  const [departmentFilter, setDepartmentFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [screen, setScreen] = useState<'login' | 'companies' | 'dashboard'>(
     token && tenantId ? 'dashboard' : 'login'
   );
@@ -52,19 +79,52 @@ function App() {
     createAccountInvitation: false,
   });
 
-  async function loadEmployees(query = '') {
+async function loadEmployees(
+  query = search,
+  page = 0,
+  filters = {
+    branchId: branchFilter,
+    departmentId: departmentFilter,
+    employmentStatus: statusFilter,
+  }
+) {
+  try {
+    setLoading(true);
+    setError('');
+
+    const response = await getEmployees(query, page, 10, {
+      branchId: filters.branchId || undefined,
+      departmentId: filters.departmentId || undefined,
+      employmentStatus: filters.employmentStatus || undefined,
+    });
+
+    if (!response.success) {
+      throw new Error(response.message);
+    }
+
+    const data = response.data;
+
+    setEmployees(data.content || []);
+    setCurrentPage(data.number ?? 0);
+    setTotalPages(data.totalPages ?? 0);
+    setTotalEmployees(data.totalElements ?? 0);
+  } catch (err) {
+    setError(err instanceof Error ? err.message : 'Unable to load employees');
+  } finally {
+    setLoading(false);
+  }
+}
+  async function loadDashboardStats() {
     try {
-      setLoading(true);
-      setError('');
-      const response = await getEmployees(query);
-      if (!response.success) throw new Error(response.message);
-      setEmployees(response.data.content || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to load employees');
-    } finally {
-      setLoading(false);
+      const response = await getEmployeeStats();
+      if (response.success && response.data) {
+        setStats(response.data);
+      }
+    } catch {
+      // stats fallback
     }
   }
+
   async function loadOrganizationOptions() {
     try {
       setLoadingOptions(true);
@@ -93,15 +153,13 @@ function App() {
     }
   }
 
-  useEffect(() => {
-    if (token && tenantId) loadEmployees();
-  }, []);
-
-  useEffect(() => {
-    if (showForm) {
-      loadOrganizationOptions();
-    }
-  }, [showForm]);
+useEffect(() => {
+  if (token && tenantId) {
+    loadEmployees();
+    loadDashboardStats();
+    loadOrganizationOptions();
+  }
+}, []);
 
   async function handleLogin(event: FormEvent) {
     event.preventDefault();
@@ -165,6 +223,33 @@ function App() {
 
   async function handleCreateEmployee(event: FormEvent) {
     event.preventDefault();
+
+    // Frontend validation
+    if (!form.firstName.trim()) {
+      setError('First name is required');
+      return;
+    }
+    if (!form.lastName.trim()) {
+      setError('Last name is required');
+      return;
+    }
+    if (!form.designation.trim()) {
+      setError('Designation is required');
+      return;
+    }
+    if (!form.joiningDate) {
+      setError('Joining date is required');
+      return;
+    }
+    if (form.workEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.workEmail.trim())) {
+      setError('Please provide a valid work email address');
+      return;
+    }
+    if (form.phone && !/^[0-9+\-\s()]{7,20}$/.test(form.phone.trim())) {
+      setError('Please provide a valid phone number (digits and optional +)');
+      return;
+    }
+
     setLoading(true);
     setError('');
 
@@ -182,6 +267,7 @@ function App() {
         createAccountInvitation: false,
       });
       await loadEmployees(search);
+      await loadDashboardStats();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to create employee');
     } finally {
@@ -190,24 +276,114 @@ function App() {
   }
 
   async function openEmployeeProfile(id: string) {
-  try {
-    setLoading(true);
-    setError('');
+    try {
+      setLoading(true);
+      setError('');
+      setActionSuccess('');
 
-    const response = await getEmployeeById(id);
+      const response = await getEmployeeById(id);
 
-    if (!response.success) {
-      throw new Error(response.message);
+      if (!response.success) {
+        throw new Error(response.message);
+      }
+
+      setSelectedEmployee(response.data);
+      setEditingEmployee(false);
+      setProfileTab('details');
+
+      // Load documents and audit history in parallel
+      loadEmployeeDocs(id);
+      loadEmployeeHist(id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load employee');
+    } finally {
+      setLoading(false);
     }
-
-    setSelectedEmployee(response.data);
-    setEditingEmployee(false);
-  } catch (err) {
-    setError(err instanceof Error ? err.message : 'Unable to load employee');
-  } finally {
-    setLoading(false);
   }
-}
+
+  async function loadEmployeeDocs(empId: string) {
+    try {
+      const res = await getEmployeeDocuments(empId);
+      if (res.success && res.data) {
+        setDocuments(res.data);
+      }
+    } catch {
+      // document list fallback
+    }
+  }
+
+  async function loadEmployeeHist(empId: string) {
+    try {
+      const res = await getEmployeeHistory(empId);
+      if (res.success && res.data) {
+        setHistory(res.data);
+      }
+    } catch {
+      // history fallback
+    }
+  }
+
+  async function handleToggleStatus(empId: string, currentStatus: string) {
+    try {
+      setLoading(true);
+      setError('');
+      setActionSuccess('');
+
+      const isCurrentlyActive = currentStatus === 'ACTIVE';
+      const response = isCurrentlyActive
+        ? await deactivateEmployee(empId)
+        : await activateEmployee(empId);
+
+      if (!response.success) throw new Error(response.message);
+
+      setSelectedEmployee(response.data);
+      setActionSuccess(
+        isCurrentlyActive
+          ? 'Employee successfully deactivated.'
+          : 'Employee successfully activated.'
+      );
+
+      await loadEmployeeHist(empId);
+      await loadEmployees(search);
+      await loadDashboardStats();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update employee status');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleUploadDocument(e: FormEvent) {
+    e.preventDefault();
+    if (!selectedEmployee || !uploadFile) return;
+
+    try {
+      setDocLoading(true);
+      setError('');
+      setActionSuccess('');
+
+      const res = await uploadEmployeeDocument(selectedEmployee.id, uploadFile, uploadDocType);
+      if (!res.success) throw new Error(res.message);
+
+      setActionSuccess('Document uploaded successfully.');
+      setUploadFile(null);
+      await loadEmployeeDocs(selectedEmployee.id);
+      await loadEmployeeHist(selectedEmployee.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to upload document');
+    } finally {
+      setDocLoading(false);
+    }
+  }
+
+  async function handleDownloadDocument(docId: string, fileName: string) {
+    if (!selectedEmployee) return;
+    try {
+      await downloadEmployeeDocument(selectedEmployee.id, docId, fileName);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to download document');
+    }
+  }
 
 function startEditingEmployee() {
   if (!selectedEmployee) return;
@@ -243,9 +419,27 @@ async function handleUpdateEmployee(event: FormEvent) {
 
     if (!selectedEmployee || !editForm) return;
 
+    if (!editForm.firstName.trim()) {
+      setError('First name is required');
+      return;
+    }
+    if (!editForm.lastName.trim()) {
+      setError('Last name is required');
+      return;
+    }
+    if (editForm.workEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editForm.workEmail.trim())) {
+      setError('Please provide a valid work email address');
+      return;
+    }
+    if (editForm.phone && !/^[0-9+\-\s()]{7,20}$/.test(editForm.phone.trim())) {
+      setError('Please provide a valid phone number');
+      return;
+    }
+
     try {
       setLoading(true);
       setError('');
+      setActionSuccess('');
 
       const response = await updateEmployee(selectedEmployee.id, editForm);
 
@@ -255,8 +449,11 @@ async function handleUpdateEmployee(event: FormEvent) {
 
       setSelectedEmployee(response.data);
       setEditingEmployee(false);
+      setActionSuccess('Employee profile updated successfully.');
 
+      await loadEmployeeHist(selectedEmployee.id);
       await loadEmployees(search);
+      await loadDashboardStats();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to update employee');
     } finally {
@@ -377,23 +574,35 @@ async function handleUpdateEmployee(event: FormEvent) {
               onClick={() => {
                 setSelectedEmployee(null);
                 setEditingEmployee(false);
+                setActionSuccess('');
               }}
             >
               Back to Employees
             </button>
 
             {!editingEmployee && (
-              <button
-                className="primary-btn"
-                onClick={startEditingEmployee}
-              >
-                Edit Employee
-              </button>
+              <>
+                <button
+                  className={employee.employmentStatus === 'ACTIVE' ? 'secondary-btn' : 'primary-btn'}
+                  disabled={loading}
+                  onClick={() => handleToggleStatus(employee.id, employee.employmentStatus)}
+                >
+                  {employee.employmentStatus === 'ACTIVE' ? 'Deactivate Employee' : 'Activate Employee'}
+                </button>
+
+                <button
+                  className="primary-btn"
+                  onClick={startEditingEmployee}
+                >
+                  Edit Employee
+                </button>
+              </>
             )}
           </div>
         </header>
 
         {error && <div className="error-message">{error}</div>}
+        {actionSuccess && <div className="success-message">{actionSuccess}</div>}
 
         {!editingEmployee ? (
           <>
@@ -408,45 +617,189 @@ async function handleUpdateEmployee(event: FormEvent) {
                 <span>{employee.employeeCode}</span>
               </div>
 
-              <span className={`status ${employee.employmentStatus?.toLowerCase()}`}>
-                {employee.employmentStatus}
-              </span>
-            </section>
-
-            <section className="profile-grid">
-              <div className="table-card profile-section">
-                <h3>Personal Information</h3>
-                <p><strong>First Name:</strong> {employee.firstName}</p>
-                <p><strong>Middle Name:</strong> {employee.middleName || '—'}</p>
-                <p><strong>Last Name:</strong> {employee.lastName}</p>
-                <p><strong>Date of Birth:</strong> {employee.dateOfBirth || '—'}</p>
-                <p><strong>Gender:</strong> {employee.gender || '—'}</p>
-                <p><strong>Personal Email:</strong> {employee.personalEmail || '—'}</p>
-                <p><strong>Work Email:</strong> {employee.workEmail || '—'}</p>
-                <p><strong>Phone:</strong> {employee.phone || '—'}</p>
-                <p><strong>Address:</strong> {employee.address || '—'}</p>
-              </div>
-
-              <div className="table-card profile-section">
-                <h3>Employment Details</h3>
-                <p><strong>Employee Code:</strong> {employee.employeeCode}</p>
-                <p><strong>Designation:</strong> {employee.designation}</p>
-                <p><strong>Joining Date:</strong> {employee.joiningDate}</p>
-                <p><strong>Employment Type:</strong> {employee.employmentType}</p>
-                <p><strong>Status:</strong> {employee.employmentStatus}</p>
-                <p><strong>Branch:</strong> {employee.branchName || '—'}</p>
-                <p><strong>Department:</strong> {employee.departmentName || '—'}</p>
-                <p><strong>Reporting Manager:</strong> {employee.reportingManagerName || '—'}</p>
-                <p><strong>Probation End:</strong> {employee.probationEndDate || '—'}</p>
-              </div>
-
-              <div className="table-card profile-section">
-                <h3>Emergency Contact</h3>
-                <p><strong>Name:</strong> {employee.emergencyContactName || '—'}</p>
-                <p><strong>Relation:</strong> {employee.emergencyContactRelation || '—'}</p>
-                <p><strong>Phone:</strong> {employee.emergencyContactPhone || '—'}</p>
+              <div className="profile-badge-group">
+                <span className={`status ${employee.employmentStatus?.toLowerCase()}`}>
+                  {employee.employmentStatus}
+                </span>
               </div>
             </section>
+
+            <div className="profile-tabs">
+              <button
+                type="button"
+                className={`tab-btn ${profileTab === 'details' ? 'active' : ''}`}
+                onClick={() => setProfileTab('details')}
+              >
+                Personal & Work Details
+              </button>
+              <button
+                type="button"
+                className={`tab-btn ${profileTab === 'documents' ? 'active' : ''}`}
+                onClick={() => setProfileTab('documents')}
+              >
+                Documents ({documents.length})
+              </button>
+              <button
+                type="button"
+                className={`tab-btn ${profileTab === 'history' ? 'active' : ''}`}
+                onClick={() => setProfileTab('history')}
+              >
+                Activity History ({history.length})
+              </button>
+            </div>
+
+            {profileTab === 'details' && (
+              <section className="profile-grid">
+                <div className="table-card profile-section">
+                  <h3>Personal Information</h3>
+                  <p><strong>First Name:</strong> {employee.firstName}</p>
+                  <p><strong>Middle Name:</strong> {employee.middleName || '—'}</p>
+                  <p><strong>Last Name:</strong> {employee.lastName}</p>
+                  <p><strong>Date of Birth:</strong> {employee.dateOfBirth || '—'}</p>
+                  <p><strong>Gender:</strong> {employee.gender || '—'}</p>
+                  <p><strong>Personal Email:</strong> {employee.personalEmail || '—'}</p>
+                  <p><strong>Work Email:</strong> {employee.workEmail || '—'}</p>
+                  <p><strong>Phone:</strong> {employee.phone || '—'}</p>
+                  <p><strong>Address:</strong> {employee.address || '—'}</p>
+                  <p><strong>PAN:</strong> {employee.panNumberMasked || '—'}</p>
+                  <p><strong>Aadhaar:</strong> {employee.aadhaarNumberMasked || '—'}</p>
+                </div>
+
+                <div className="table-card profile-section">
+                  <h3>Employment Details</h3>
+                  <p><strong>Employee Code:</strong> {employee.employeeCode}</p>
+                  <p><strong>Designation:</strong> {employee.designation}</p>
+                  <p><strong>Joining Date:</strong> {employee.joiningDate}</p>
+                  <p><strong>Employment Type:</strong> {employee.employmentType}</p>
+                  <p><strong>Status:</strong> {employee.employmentStatus}</p>
+                  <p><strong>Branch:</strong> {employee.branchName || '—'}</p>
+                  <p><strong>Department:</strong> {employee.departmentName || '—'}</p>
+                  <p><strong>Reporting Manager:</strong> {employee.reportingManagerName || '—'}</p>
+                  <p><strong>Probation End:</strong> {employee.probationEndDate || '—'}</p>
+                </div>
+
+                <div className="table-card profile-section">
+                  <h3>Emergency Contact</h3>
+                  <p><strong>Name:</strong> {employee.emergencyContactName || '—'}</p>
+                  <p><strong>Relation:</strong> {employee.emergencyContactRelation || '—'}</p>
+                  <p><strong>Phone:</strong> {employee.emergencyContactPhone || '—'}</p>
+                </div>
+              </section>
+            )}
+
+            {profileTab === 'documents' && (
+              <section className="table-card profile-tab-content">
+                <div className="tab-section-header">
+                  <div>
+                    <h3>Employee Documents</h3>
+                    <p>Upload and manage confidential employment documents.</p>
+                  </div>
+                </div>
+
+                <form className="document-upload-bar" onSubmit={handleUploadDocument}>
+                  <select
+                    value={uploadDocType}
+                    onChange={e => setUploadDocType(e.target.value)}
+                  >
+                    <option value="RESUME">Resume / CV</option>
+                    <option value="ID_PROOF">ID Proof</option>
+                    <option value="ADDRESS_PROOF">Address Proof</option>
+                    <option value="EDUCATION">Education Certificate</option>
+                    <option value="OFFER_LETTER">Offer Letter</option>
+                    <option value="CONTRACT">Contract</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+
+                  <input
+                    type="file"
+                    required
+                    onChange={e => setUploadFile(e.target.files?.[0] || null)}
+                  />
+
+                  <button
+                    type="submit"
+                    className="primary-btn"
+                    disabled={docLoading || !uploadFile}
+                  >
+                    {docLoading ? 'Uploading...' : 'Upload Document'}
+                  </button>
+                </form>
+
+                {documents.length === 0 ? (
+                  <div className="empty-tab-state">No documents uploaded yet.</div>
+                ) : (
+                  <div className="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>DOCUMENT TYPE</th>
+                          <th>FILE NAME</th>
+                          <th>SIZE</th>
+                          <th>UPLOADED ON</th>
+                          <th>ACTION</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {documents.map(doc => (
+                          <tr key={doc.id}>
+                            <td><strong>{doc.documentType}</strong></td>
+                            <td>{doc.fileName}</td>
+                            <td>{(doc.fileSizeBytes / 1024).toFixed(1)} KB</td>
+                            <td>{new Date(doc.createdAt).toLocaleDateString()}</td>
+                            <td>
+                              <button
+                                type="button"
+                                className="action-link-btn"
+                                onClick={() => handleDownloadDocument(doc.id, doc.fileName)}
+                              >
+                                Download
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {profileTab === 'history' && (
+              <section className="table-card profile-tab-content">
+                <div className="tab-section-header">
+                  <div>
+                    <h3>Audit Activity Timeline</h3>
+                    <p>Detailed chronological history of profile changes and events.</p>
+                  </div>
+                </div>
+
+                {history.length === 0 ? (
+                  <div className="empty-tab-state">No activity records recorded yet.</div>
+                ) : (
+                  <div className="timeline-list">
+                    {history.map(item => (
+                      <div key={item.id} className="timeline-item">
+                        <div className="timeline-badge" />
+                        <div className="timeline-content">
+                          <div className="timeline-header">
+                            <strong>{item.action}</strong>
+                            <small>{new Date(item.createdAt).toLocaleString()}</small>
+                          </div>
+                          <p className="timeline-details">{item.details || 'Profile event updated'}</p>
+                          {item.fieldName && (
+                            <div className="timeline-change">
+                              <span>Field: <code>{item.fieldName}</code></span>
+                              {item.oldValue && <span> Old: <s>{item.oldValue}</s></span>}
+                              {item.newValue && <span> New: <b>{item.newValue}</b></span>}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
           </>
         ) : (
           <section className="table-card profile-edit-card">
@@ -705,24 +1058,129 @@ async function handleUpdateEmployee(event: FormEvent) {
         </section>
 
         <section className="stats-grid">
-          <div className="stat-card"><span>Total Employees</span><h2>{employees.length}</h2><small>Loaded records</small></div>
-          <div className="stat-card"><span>Active Employees</span><h2>{employees.filter(e => e.employmentStatus === 'ACTIVE').length}</h2><small>Currently active</small></div>
-          <div className="stat-card"><span>Departments</span><h2>{new Set(employees.map(e => e.departmentId).filter(Boolean)).size}</h2><small>With employees</small></div>
+          <div className="stat-card">
+            <span>Total Employees</span>
+            <h2>{stats ? stats.totalEmployees : totalEmployees}</h2>
+            <small>Active & inactive company workforce</small>
+          </div>
+
+          <div className="stat-card">
+            <span>Active Employees</span>
+            <h2>
+              {stats ? stats.activeEmployees : employees.filter(e => e.employmentStatus === 'ACTIVE').length}
+            </h2>
+            <small>Currently active employees</small>
+          </div>
+
+          <div className="stat-card">
+            <span>Inactive Employees</span>
+            <h2>
+              {stats ? stats.inactiveEmployees : 0}
+            </h2>
+            <small>On hold / deactivated</small>
+          </div>
+
+          <div className="stat-card">
+            <span>Departments</span>
+            <h2>{stats ? stats.totalDepartments : departments.length}</h2>
+            <small>Across company</small>
+          </div>
         </section>
 
         <section className="table-card">
           <div className="table-header">
             <div><h3>All Employees</h3><p>Company: {tenantName}</p></div>
-            <div className="search-group">
-              <input
-                type="search"
-                placeholder="Search employees..."
-                value={search}
-                onChange={event => setSearch(event.target.value)}
-                onKeyDown={event => event.key === 'Enter' && loadEmployees(search)}
-              />
-              <button className="secondary-btn" onClick={() => loadEmployees(search)}>Search</button>
-            </div>
+            <div className="employee-filters">
+
+  {/* Search */}
+  <input
+    type="search"
+    placeholder="Search employees..."
+    value={search}
+    onChange={e => setSearch(e.target.value)}
+    onKeyDown={e => {
+      if (e.key === 'Enter') loadEmployees(search, 0);
+    }}
+  />
+
+  {/* Branch Filter */}
+  <select
+    value={branchFilter}
+    onChange={e => {
+      setBranchFilter(e.target.value);
+      setDepartmentFilter('');
+    }}
+  >
+    <option value="">All Branches</option>
+
+    {branches.map(branch => (
+      <option key={branch.id} value={branch.id}>
+        {branch.name}
+      </option>
+    ))}
+  </select>
+
+  {/* Department Filter */}
+  <select
+    value={departmentFilter}
+    onChange={e => setDepartmentFilter(e.target.value)}
+  >
+    <option value="">All Departments</option>
+
+    {departments
+      .filter(department =>
+        !branchFilter ||
+        !department.branchId ||
+        department.branchId === branchFilter
+      )
+      .map(department => (
+        <option key={department.id} value={department.id}>
+          {department.name}
+        </option>
+      ))}
+  </select>
+
+  {/* Status Filter */}
+  <select
+    value={statusFilter}
+    onChange={e => setStatusFilter(e.target.value)}
+  >
+    <option value="">All Statuses</option>
+    <option value="ACTIVE">Active</option>
+    <option value="INACTIVE">Inactive</option>
+    <option value="TERMINATED">Terminated</option>
+  </select>
+
+  {/* Apply Button */}
+  <button
+    className="primary-btn"
+    onClick={() => loadEmployees(search, 0)}
+    disabled={loading}
+  >
+    Apply Filters
+  </button>
+
+  {/* Reset Button */}
+  <button
+    className="secondary-btn"
+    onClick={() => {
+      setSearch('');
+      setBranchFilter('');
+      setDepartmentFilter('');
+      setStatusFilter('');
+
+      loadEmployees('', 0, {
+        branchId: '',
+        departmentId: '',
+        employmentStatus: '',
+      });
+    }}
+    disabled={loading}
+  >
+    Reset
+  </button>
+
+</div>
           </div>
 
           {error && <div className="error-message">{error}</div>}
@@ -737,7 +1195,7 @@ async function handleUpdateEmployee(event: FormEvent) {
             ) : (
               <div className="table-scroll">
                 <table>
-                  <thead><tr><th>EMPLOYEE</th><th>DESIGNATION</th><th>DEPARTMENT</th><th>BRANCH</th><th>JOINING DATE</th><th>STATUS</th></tr></thead>
+                  <thead><tr><th>EMPLOYEE</th><th>DESIGNATION</th><th>DEPARTMENT</th><th>BRANCH</th><th>JOINING DATE</th><th>STATUS</th><th>ACTIONS</th></tr></thead>
                   <tbody>
                     {employees.map(employee => (
                       <tr key={employee.id}>
@@ -753,12 +1211,51 @@ async function handleUpdateEmployee(event: FormEvent) {
                         <td>{employee.branchName || '—'}</td>
                         <td>{employee.joiningDate || '—'}</td>
                         <td><span className={`status ${employee.employmentStatus?.toLowerCase()}`}>{employee.employmentStatus || 'UNKNOWN'}</span></td>
+                        <td>
+                          <button
+                            type="button"
+                            className="status-toggle-btn"
+                            disabled={loading}
+                            onClick={() => handleToggleStatus(employee.id, employee.employmentStatus)}
+                          >
+                            {employee.employmentStatus === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                            </div>
+            )}
+
+            {/* Employee Pagination */}
+            {!loading && totalPages > 0 && (
+              <div className="pagination">
+                <span>
+                  Page {currentPage + 1} of {totalPages}
+                  {' '}| {totalEmployees} employees
+                </span>
+
+                <div>
+                  <button
+                    className="secondary-btn"
+                    disabled={currentPage === 0 || loading}
+                    onClick={() => loadEmployees(search, currentPage - 1)}
+                  >
+                    Previous
+                  </button>
+
+                  <button
+                    className="secondary-btn"
+                    disabled={currentPage >= totalPages - 1 || loading}
+                    onClick={() => loadEmployees(search, currentPage + 1)}
+                  >
+                    Next
+                  </button>
+                </div>
               </div>
             )}
+      
         </section>
       </main>
 

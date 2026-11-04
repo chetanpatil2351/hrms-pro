@@ -27,6 +27,8 @@ public interface EmployeeRepository extends JpaRepository<Employee, UUID> {
 
     long countByTenantIdAndEmploymentStatus(UUID tenantId, String status);
 
+    long countByTenantIdAndEmploymentStatusIgnoreCase(UUID tenantId, String status);
+
     long countByTenantId(UUID tenantId);
 
     List<Employee> findByTenantIdAndBranchId(UUID tenantId, UUID branchId);

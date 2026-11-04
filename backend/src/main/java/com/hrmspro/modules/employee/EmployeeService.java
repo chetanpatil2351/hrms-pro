@@ -56,12 +56,17 @@ public class EmployeeService {
                     .orElseThrow(() -> new IllegalArgumentException("Branch does not belong to this company"));
         }
 
-        // 3. Validate Department belongs to Tenant
+        // 3. Validate Department belongs to Tenant and matches Branch if department is branch-scoped
         Department department = null;
         if (request.getDepartmentId() != null) {
             department = departmentRepository.findById(request.getDepartmentId())
                     .filter(d -> d.getTenantId().equals(tenantId))
                     .orElseThrow(() -> new IllegalArgumentException("Department does not belong to this company"));
+
+            if (department.getBranch() != null && branch != null && !department.getBranch().getId().equals(branch.getId())) {
+                throw new IllegalArgumentException("Selected department belongs to a different branch (" +
+                        department.getBranch().getName() + ")");
+            }
         }
 
         // 4. Validate Reporting Manager belongs to same Tenant
@@ -198,8 +203,9 @@ public class EmployeeService {
                 .orElseThrow(() -> new ResourceNotFoundException("Employee not found in this company"));
 
         // Validate Branch
+        Branch branch = null;
         if (request.getBranchId() != null) {
-            Branch branch = branchRepository.findById(request.getBranchId())
+            branch = branchRepository.findById(request.getBranchId())
                     .filter(b -> b.getTenantId().equals(tenantId))
                     .orElseThrow(() -> new IllegalArgumentException("Branch does not belong to this company"));
             employee.setBranch(branch);
@@ -212,6 +218,11 @@ public class EmployeeService {
             Department dept = departmentRepository.findById(request.getDepartmentId())
                     .filter(d -> d.getTenantId().equals(tenantId))
                     .orElseThrow(() -> new IllegalArgumentException("Department does not belong to this company"));
+
+            if (dept.getBranch() != null && branch != null && !dept.getBranch().getId().equals(branch.getId())) {
+                throw new IllegalArgumentException("Selected department belongs to a different branch (" +
+                        dept.getBranch().getName() + ")");
+            }
             employee.setDepartment(dept);
         } else {
             employee.setDepartment(null);
@@ -252,6 +263,27 @@ public class EmployeeService {
         recordAudit(tenantId, employee, actorUserId, "UPDATED", null, null, null, "Employee profile updated");
 
         return mapToEmployeeResponse(employee);
+    }
+
+    @Transactional(readOnly = true)
+    public EmployeeStatsDto getEmployeeStats(UUID tenantId) {
+        long totalEmployees = employeeRepository.countByTenantId(tenantId);
+        long activeEmployees = employeeRepository.countByTenantIdAndEmploymentStatusIgnoreCase(tenantId, "ACTIVE");
+        long inactiveEmployees = employeeRepository.countByTenantIdAndEmploymentStatusIgnoreCase(tenantId, "INACTIVE");
+        long probationEmployees = employeeRepository.countByTenantIdAndEmploymentStatusIgnoreCase(tenantId, "PROBATION");
+        long terminatedEmployees = employeeRepository.countByTenantIdAndEmploymentStatusIgnoreCase(tenantId, "TERMINATED");
+        long totalDepartments = departmentRepository.countByTenantId(tenantId);
+        long totalBranches = branchRepository.countByTenantId(tenantId);
+
+        return EmployeeStatsDto.builder()
+                .totalEmployees(totalEmployees)
+                .activeEmployees(activeEmployees)
+                .inactiveEmployees(inactiveEmployees)
+                .probationEmployees(probationEmployees)
+                .terminatedEmployees(terminatedEmployees)
+                .totalDepartments(totalDepartments)
+                .totalBranches(totalBranches)
+                .build();
     }
 
     @Transactional
@@ -300,6 +332,13 @@ public class EmployeeService {
         return documentRepository.findByTenantIdAndEmployeeId(tenantId, employeeId).stream()
                 .map(this::mapToDocumentDto)
                 .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public EmployeeDocument getEmployeeDocumentEntity(UUID tenantId, UUID employeeId, UUID documentId) {
+        return documentRepository.findByIdAndTenantId(documentId, tenantId)
+                .filter(doc -> doc.getEmployee().getId().equals(employeeId))
+                .orElseThrow(() -> new ResourceNotFoundException("Document not found for this employee"));
     }
 
     @Transactional(readOnly = true)

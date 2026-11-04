@@ -9,4 +9,5 @@ import java.util.UUID;
 @Repository
 public interface EmployeeDocumentRepository extends JpaRepository<EmployeeDocument, UUID> {
     List<EmployeeDocument> findByTenantIdAndEmployeeId(UUID tenantId, UUID employeeId);
+    java.util.Optional<EmployeeDocument> findByIdAndTenantId(UUID id, UUID tenantId);
 }

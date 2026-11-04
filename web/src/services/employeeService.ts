@@ -1,4 +1,4 @@
-import { apiRequest } from './api';
+import { apiRequest, downloadFile } from './api';
 
 export interface ApiResponse<T> {
   success: boolean;
@@ -6,6 +6,39 @@ export interface ApiResponse<T> {
   data: T;
   errors?: unknown;
   timestamp: string;
+}
+
+export interface EmployeeStats {
+  totalEmployees: number;
+  activeEmployees: number;
+  inactiveEmployees: number;
+  probationEmployees: number;
+  terminatedEmployees: number;
+  totalDepartments: number;
+  totalBranches: number;
+}
+
+export interface EmployeeDocument {
+  id: string;
+  employeeId: string;
+  documentType: string;
+  fileName: string;
+  filePath?: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  createdAt: string;
+}
+
+export interface EmployeeAuditLog {
+  id: string;
+  employeeId: string;
+  actorId?: string;
+  action: string;
+  fieldName?: string;
+  oldValue?: string;
+  newValue?: string;
+  details?: string;
+  createdAt: string;
 }
 
 export interface OrganizationOption {
@@ -110,7 +143,19 @@ export interface EmployeePage {
   size: number;
 }
 
-export async function getEmployees(search = '', page = 0, size = 20) {
+
+export interface EmployeeFilters {
+  branchId?: string;
+  departmentId?: string;
+  employmentStatus?: string;
+}
+
+export async function getEmployees(
+  search = '',
+  page = 0,
+  size = 10,
+  filters: EmployeeFilters = {}
+) {
   const params = new URLSearchParams({
     page: String(page),
     size: String(size),
@@ -118,6 +163,11 @@ export async function getEmployees(search = '', page = 0, size = 20) {
   });
 
   if (search.trim()) params.set('search', search.trim());
+  if (filters.branchId) params.set('branchId', filters.branchId);
+  if (filters.departmentId) params.set('departmentId', filters.departmentId);
+  if (filters.employmentStatus) {
+    params.set('employmentStatus', filters.employmentStatus);
+  }
 
   return apiRequest<ApiResponse<EmployeePage>>(
     `/employees?${params.toString()}`
@@ -151,4 +201,49 @@ export async function getBranches() {
 
 export async function getDepartments() {
   return apiRequest<ApiResponse<OrganizationOption[]>>('/departments');
+}
+
+export async function getEmployeeStats() {
+  return apiRequest<ApiResponse<EmployeeStats>>('/employees/stats');
+}
+
+export async function activateEmployee(id: string) {
+  return apiRequest<ApiResponse<Employee>>(`/employees/${id}/activate`, {
+    method: 'PATCH',
+  });
+}
+
+export async function deactivateEmployee(id: string) {
+  return apiRequest<ApiResponse<Employee>>(`/employees/${id}/deactivate`, {
+    method: 'PATCH',
+  });
+}
+
+export async function updateEmployeeStatus(id: string, status: string) {
+  return apiRequest<ApiResponse<Employee>>(`/employees/${id}/status?status=${encodeURIComponent(status)}`, {
+    method: 'PATCH',
+  });
+}
+
+export async function getEmployeeDocuments(id: string) {
+  return apiRequest<ApiResponse<EmployeeDocument[]>>(`/employees/${id}/documents`);
+}
+
+export async function uploadEmployeeDocument(id: string, file: File, documentType = 'OTHER') {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('documentType', documentType);
+
+  return apiRequest<ApiResponse<EmployeeDocument>>(`/employees/${id}/documents/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+export async function downloadEmployeeDocument(id: string, documentId: string, fileName: string) {
+  return downloadFile(`/employees/${id}/documents/${documentId}/download`, fileName);
+}
+
+export async function getEmployeeHistory(id: string) {
+  return apiRequest<ApiResponse<EmployeeAuditLog[]>>(`/employees/${id}/history`);
 }

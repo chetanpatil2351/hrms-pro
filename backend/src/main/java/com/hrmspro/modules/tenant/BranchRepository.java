@@ -11,4 +11,5 @@ import java.util.UUID;
 public interface BranchRepository extends JpaRepository<Branch, UUID> {
     List<Branch> findByTenantId(UUID tenantId);
     Optional<Branch> findByTenantIdAndCode(UUID tenantId, String code);
+    long countByTenantId(UUID tenantId);
 }

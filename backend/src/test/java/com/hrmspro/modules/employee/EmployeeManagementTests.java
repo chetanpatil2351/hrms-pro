@@ -234,4 +234,58 @@ class EmployeeManagementTests {
         List<EmployeeAuditLogDto> history = employeeService.getEmployeeHistory(tenantA.getId(), emp.getId());
         assertThat(history).extracting(EmployeeAuditLogDto::getAction).contains("DOCUMENT_UPLOADED");
     }
+
+    @Test
+    @DisplayName("Employee dashboard statistics return accurate tenant-wide counts")
+    void testEmployeeDashboardStatistics() {
+        EmployeeStatsDto initialStats = employeeService.getEmployeeStats(tenantA.getId());
+        long baseTotal = initialStats.getTotalEmployees();
+        long baseActive = initialStats.getActiveEmployees();
+
+        EmployeeResponseDto emp1 = employeeService.createEmployee(tenantA.getId(), hrUser.getId(), CreateEmployeeRequest.builder()
+                .firstName("Sarah")
+                .lastName("Connor")
+                .joiningDate(LocalDate.now())
+                .designation("Sergeant")
+                .build());
+
+        EmployeeStatsDto afterCreate = employeeService.getEmployeeStats(tenantA.getId());
+        assertThat(afterCreate.getTotalEmployees()).isEqualTo(baseTotal + 1);
+        assertThat(afterCreate.getActiveEmployees()).isEqualTo(baseActive + 1);
+
+        // Deactivate employee
+        employeeService.updateEmployeeStatus(tenantA.getId(), hrUser.getId(), emp1.getId(), "INACTIVE");
+        EmployeeStatsDto afterDeactivate = employeeService.getEmployeeStats(tenantA.getId());
+        assertThat(afterDeactivate.getActiveEmployees()).isEqualTo(baseActive);
+        assertThat(afterDeactivate.getInactiveEmployees()).isEqualTo(initialStats.getInactiveEmployees() + 1);
+
+        // Reactivate employee
+        employeeService.updateEmployeeStatus(tenantA.getId(), hrUser.getId(), emp1.getId(), "ACTIVE");
+        EmployeeStatsDto afterReactivate = employeeService.getEmployeeStats(tenantA.getId());
+        assertThat(afterReactivate.getActiveEmployees()).isEqualTo(baseActive + 1);
+    }
+
+    @Test
+    @DisplayName("Branch-scoped department validation rejects mismatching department")
+    void testDepartmentBranchMismatchValidation() {
+        BranchDto branch2 = tenantService.createBranch(tenantA.getId(), BranchDto.builder()
+                .name("Texas Office")
+                .code("TX-01")
+                .build());
+
+        // deptA belongs to branchA (Silicon Valley). Trying to assign to branch2 (Texas) should fail.
+        CreateEmployeeRequest invalidReq = CreateEmployeeRequest.builder()
+                .firstName("Miles")
+                .lastName("Bennett")
+                .joiningDate(LocalDate.now())
+                .designation("Specialist")
+                .branchId(branch2.getId())
+                .departmentId(deptA.getId()) // belongs to branchA
+                .build();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                employeeService.createEmployee(tenantA.getId(), hrUser.getId(), invalidReq)
+        );
+        assertThat(ex.getMessage()).contains("Selected department belongs to a different branch");
+    }
 }
