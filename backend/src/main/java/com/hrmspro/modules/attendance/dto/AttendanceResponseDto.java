@@ -42,5 +42,10 @@ public class AttendanceResponseDto {
     private Integer lateByMinutes;
     private Integer earlyDepartureByMinutes;
 
+    // GPS & Geofence evaluation details
+    private Double punchDistanceMeters;
+    private String geofenceStatus;
+    private String validationResult;
+
     private List<AttendanceBreakDto> breaks;
 }

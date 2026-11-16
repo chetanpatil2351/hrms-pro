@@ -1,8 +1,21 @@
-﻿spring:
+spring:
   application:
     name: hrms-backend
   profiles:
     active: dev
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 5MB
 
 server:
   port: 8080
+
+app:
+  attendance:
+    max-accuracy-meters: 100.0
+    rapid-punch-threshold-seconds: 60
+    impossible-travel-speed-kmh: 300.0
+    suspicious-jump-meters: 50000.0
+    failed-punch-flag-threshold: 3
+

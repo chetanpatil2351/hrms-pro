@@ -190,7 +190,7 @@ class AttendanceAndGeofencingTests {
     void testAttendanceCorrectionFlow() {
         CheckInRequest checkInReq = CheckInRequest.builder().latitude(HQ_LAT).longitude(HQ_LON).build();
         AttendanceResponseDto record = attendanceService.checkIn(tenant.getId(), userProfile.getId(), checkInReq);
-        attendanceService.checkOut(tenant.getId(), userProfile.getId(), CheckOutRequest.builder().build());
+        attendanceService.checkOut(tenant.getId(), userProfile.getId(), CheckOutRequest.builder().latitude(HQ_LAT).longitude(HQ_LON).build());
 
         // Submit correction
         AttendanceCorrectionRequest req = AttendanceCorrectionRequest.builder()
@@ -205,5 +205,175 @@ class AttendanceAndGeofencingTests {
         // Review approval
         AttendanceCorrectionDto approved = attendanceService.reviewCorrection(tenant.getId(), userProfile.getId(), correction.getId(), true, "Approved by Manager");
         assertThat(approved.getStatus()).isEqualTo("APPROVED");
+    }
+
+    @Test
+    @DisplayName("Punches with missing location coordinates are rejected")
+    void testMissingCoordinatesValidation() {
+        CheckInRequest missingLat = CheckInRequest.builder()
+                .latitude(null)
+                .longitude(HQ_LON)
+                .build();
+
+        IllegalArgumentException exLat = assertThrows(IllegalArgumentException.class, () ->
+                attendanceService.checkIn(tenant.getId(), userProfile.getId(), missingLat)
+        );
+        assertThat(exLat.getMessage()).contains("Punch location is required");
+
+        CheckInRequest missingLon = CheckInRequest.builder()
+                .latitude(HQ_LAT)
+                .longitude(null)
+                .build();
+
+        IllegalArgumentException exLon = assertThrows(IllegalArgumentException.class, () ->
+                attendanceService.checkIn(tenant.getId(), userProfile.getId(), missingLon)
+        );
+        assertThat(exLon.getMessage()).contains("Punch location is required");
+    }
+
+    @Test
+    @DisplayName("Punches with invalid coordinates outside geographic bounds are rejected")
+    void testInvalidCoordinatesValidation() {
+        // Latitude > 90
+        CheckInRequest invalidLatHigh = CheckInRequest.builder()
+                .latitude(95.0)
+                .longitude(HQ_LON)
+                .build();
+
+        IllegalArgumentException exLat = assertThrows(IllegalArgumentException.class, () ->
+                attendanceService.checkIn(tenant.getId(), userProfile.getId(), invalidLatHigh)
+        );
+        assertThat(exLat.getMessage()).contains("Invalid latitude: must be between -90.0 and 90.0");
+
+        // Latitude < -90
+        CheckInRequest invalidLatLow = CheckInRequest.builder()
+                .latitude(-95.0)
+                .longitude(HQ_LON)
+                .build();
+
+        assertThrows(IllegalArgumentException.class, () ->
+                attendanceService.checkIn(tenant.getId(), userProfile.getId(), invalidLatLow)
+        );
+
+        // Longitude > 180
+        CheckInRequest invalidLonHigh = CheckInRequest.builder()
+                .latitude(HQ_LAT)
+                .longitude(185.0)
+                .build();
+
+        IllegalArgumentException exLon = assertThrows(IllegalArgumentException.class, () ->
+                attendanceService.checkIn(tenant.getId(), userProfile.getId(), invalidLonHigh)
+        );
+        assertThat(exLon.getMessage()).contains("Invalid longitude: must be between -180.0 and 180.0");
+
+        // Longitude < -180
+        CheckInRequest invalidLonLow = CheckInRequest.builder()
+                .latitude(HQ_LAT)
+                .longitude(-185.0)
+                .build();
+
+        assertThrows(IllegalArgumentException.class, () ->
+                attendanceService.checkIn(tenant.getId(), userProfile.getId(), invalidLonLow)
+        );
+    }
+
+    @Test
+    @DisplayName("Punches with poor GPS accuracy exceeding maximum acceptable threshold are rejected")
+    void testPoorGpsAccuracyValidation() {
+        CheckInRequest inaccurateReq = CheckInRequest.builder()
+                .latitude(HQ_LAT)
+                .longitude(HQ_LON)
+                .accuracyMeters(150.0) // Exceeds default limit of 100m
+                .build();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                attendanceService.checkIn(tenant.getId(), userProfile.getId(), inaccurateReq)
+        );
+        assertThat(ex.getMessage()).contains("GPS accuracy is too low");
+
+        // Negative accuracy is also rejected
+        CheckInRequest negativeAccuracyReq = CheckInRequest.builder()
+                .latitude(HQ_LAT)
+                .longitude(HQ_LON)
+                .accuracyMeters(-5.0)
+                .build();
+
+        assertThrows(IllegalArgumentException.class, () ->
+                attendanceService.checkIn(tenant.getId(), userProfile.getId(), negativeAccuracyReq)
+        );
+    }
+
+    @Test
+    @DisplayName("Punches with unauthorized branch location are rejected")
+    void testUnauthorizedBranchLocationValidation() {
+        // Create another branch for the same tenant with its own geofence location
+        BranchDto branch2 = tenantService.createBranch(tenant.getId(), BranchDto.builder()
+                .name("Satellite Office")
+                .code("SAT-02")
+                .build());
+
+        AttendanceLocationDto locBranch2 = attendanceService.createLocation(tenant.getId(), AttendanceLocationDto.builder()
+                .branchId(branch2.getId())
+                .name("Satellite Gate")
+                .latitude(13.0827)
+                .longitude(80.2707)
+                .radiusMeters(100)
+                .build());
+
+        // Employee assigned to HQ attempts check-in explicitly referencing Satellite branch location
+        CheckInRequest spoofedBranchLocReq = CheckInRequest.builder()
+                .latitude(13.0827)
+                .longitude(80.2707)
+                .accuracyMeters(10.0)
+                .locationId(locBranch2.getId())
+                .build();
+
+        AccessDeniedException ex = assertThrows(AccessDeniedException.class, () ->
+                attendanceService.checkIn(tenant.getId(), userProfile.getId(), spoofedBranchLocReq)
+        );
+        assertThat(ex.getMessage()).contains("Unauthorized attendance location");
+    }
+
+    @Test
+    @DisplayName("Cross-tenant attendance access is prevented")
+    void testCrossTenantAttendanceIsolation() {
+        // Create second tenant and user
+        UserProfileDto tenantBUser = authService.register(RegisterRequest.builder()
+                .email("admin.tenantb@media.com")
+                .password("Password123!")
+                .firstName("Clark")
+                .lastName("Kent")
+                .build());
+
+        TenantResponseDto tenantB = tenantService.createTenant(tenantBUser.getId(), CreateTenantRequest.builder()
+                .name("Daily Planet")
+                .subdomain("planet")
+                .companyCode("PLN")
+                .email("admin@planet.com")
+                .build());
+
+        // Attempt to check in using employee identity against tenant B
+        CheckInRequest punchReq = CheckInRequest.builder()
+                .latitude(HQ_LAT)
+                .longitude(HQ_LON)
+                .build();
+
+        assertThrows(AccessDeniedException.class, () ->
+                attendanceService.checkIn(tenantB.getId(), userProfile.getId(), punchReq)
+        );
+    }
+
+    @Test
+    @DisplayName("Check-out without an active check-in session fails")
+    void testCheckOutWithoutCheckInFails() {
+        CheckOutRequest checkOutReq = CheckOutRequest.builder()
+                .latitude(HQ_LAT)
+                .longitude(HQ_LON)
+                .build();
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
+                attendanceService.checkOut(tenant.getId(), userProfile.getId(), checkOutReq)
+        );
+        assertThat(ex.getMessage()).contains("No active check-in session found");
     }
 }

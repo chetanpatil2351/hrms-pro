@@ -11,4 +11,6 @@ import java.util.UUID;
 public interface AttendanceEventRepository extends JpaRepository<AttendanceEvent, UUID> {
     Optional<AttendanceEvent> findByIdempotencyKey(String idempotencyKey);
     List<AttendanceEvent> findByAttendanceRecordIdOrderByEventTimeAsc(UUID attendanceRecordId);
+    Optional<AttendanceEvent> findFirstByTenantIdAndEmployeeIdOrderByEventTimeDesc(UUID tenantId, UUID employeeId);
+
 }

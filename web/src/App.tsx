@@ -29,6 +29,7 @@ import {
   type EmployeeDocument,
   type EmployeeAuditLog,
 } from './services/employeeService';
+import { getTodayAttendance, getAttendanceHistory, checkIn, checkOut, type AttendanceResponseDto } from './services/attendanceService';
 import './App.css';
 
 function App() {
@@ -55,6 +56,12 @@ function App() {
   const [stats, setStats] = useState<EmployeeStats | null>(null);
 
   // Profile Sub-features
+  const [todayAttendance, setTodayAttendance] = useState<any>(null);
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [attendanceError, setAttendanceError] = useState('');
+  const [historyData, setHistoryData] = useState<any>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
   const [profileTab, setProfileTab] = useState<'details' | 'documents' | 'history'>('details');
   const [documents, setDocuments] = useState<EmployeeDocument[]>([]);
   const [history, setHistory] = useState<EmployeeAuditLog[]>([]);
@@ -66,9 +73,20 @@ function App() {
   const [branchFilter, setBranchFilter] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [screen, setScreen] = useState<'login' | 'companies' | 'dashboard'>(
+  // State for screen navigation
+  const [screen, setScreen] = useState<'login' | 'companies' | 'dashboard' | 'attendance'>(
     token && tenantId ? 'dashboard' : 'login'
   );
+  // Attendance pagination
+  const [attHistoryPage, setAttHistoryPage] = useState(0);
+  const [punchLoading, setPunchLoading] = useState(false);
+  const [attendanceSuccess, setAttendanceSuccess] = useState('');
+
+  // GPS Attendance State
+  const [gpsLoading, setGpsLoading] = useState(false);
+  const [gpsPermission, setGpsPermission] = useState<'prompt' | 'granted' | 'denied' | 'unsupported'>('prompt');
+  const [lastPosition, setLastPosition] = useState<{ latitude: number; longitude: number; accuracy: number; timestamp: number } | null>(null);
+  const [lastPunchResponse, setLastPunchResponse] = useState<AttendanceResponseDto | null>(null);
 
   const [form, setForm] = useState<CreateEmployeeRequest>({
     firstName: '',
@@ -355,7 +373,23 @@ useEffect(() => {
 
   async function handleUploadDocument(e: FormEvent) {
     e.preventDefault();
-    if (!selectedEmployee || !uploadFile) return;
+    if (!selectedEmployee || !uploadFile || docLoading) return;
+
+    // Validate size (5 MB)
+    const MAX_SIZE = 5 * 1024 * 1024;
+    if (uploadFile.size > MAX_SIZE) {
+      setError('File size exceeds the 5 MB limit');
+      return;
+    }
+
+    // Validate extension
+    const allowedExtensions = ['pdf', 'jpg', 'jpeg', 'png'];
+    const parts = uploadFile.name.split('.');
+    const ext = parts.length > 1 ? parts.pop()?.toLowerCase() : '';
+    if (!ext || !allowedExtensions.includes(ext)) {
+      setError('Only PDF, JPG, JPEG, and PNG files are allowed');
+      return;
+    }
 
     try {
       setDocLoading(true);
@@ -481,6 +515,220 @@ async function handleUpdateEmployee(event: FormEvent) {
     setScreen('login');
   }
 
+  // --- Attendance Functions ---
+
+  async function loadTodayAttendance() {
+    try {
+      setAttendanceLoading(true);
+      setAttendanceError('');
+      const res = await getTodayAttendance();
+      if (res.success) {
+        setTodayAttendance(res.data || null);
+      }
+    } catch (err) {
+      setAttendanceError(err instanceof Error ? err.message : 'Failed to load today\'s attendance');
+    } finally {
+      setAttendanceLoading(false);
+    }
+  }
+
+  async function loadAttendanceHistory(page = 0) {
+    try {
+      setHistoryLoading(true);
+      setHistoryError('');
+      const res = await getAttendanceHistory(page, 20);
+      if (res.success && res.data) {
+        setHistoryData(res.data);
+        setAttHistoryPage(res.data.number ?? page);
+      }
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : 'Failed to load attendance history');
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  // --- GPS Location Capture Helper ---
+  function getFreshBrowserCoordinates(): Promise<GeolocationPosition> {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        setGpsPermission('unsupported');
+        reject(new Error('Geolocation is not supported by your browser'));
+        return;
+      }
+
+      setGpsLoading(true);
+
+      const options: PositionOptions = {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0, // Never use stale cached coordinates
+      };
+
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setGpsLoading(false);
+          setGpsPermission('granted');
+          setLastPosition({
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+            timestamp: pos.timestamp,
+          });
+          resolve(pos);
+        },
+        (err) => {
+          setGpsLoading(false);
+          if (err.code === err.PERMISSION_DENIED) {
+            setGpsPermission('denied');
+            reject(new Error('Location permission denied. Please enable location access in browser settings to punch attendance.'));
+          } else if (err.code === err.POSITION_UNAVAILABLE) {
+            reject(new Error('GPS location unavailable. Please check that location services or GPS are turned on.'));
+          } else if (err.code === err.TIMEOUT) {
+            reject(new Error('GPS location request timed out. Please ensure good signal coverage and try again.'));
+          } else {
+            reject(new Error(err.message || 'Unable to retrieve current GPS location.'));
+          }
+        },
+        options
+      );
+    });
+  }
+
+  async function handleCheckIn() {
+    if (punchLoading || gpsLoading) return;
+    try {
+      setPunchLoading(true);
+      setAttendanceError('');
+      setAttendanceSuccess('');
+
+      // 1. Capture fresh GPS location
+      const pos = await getFreshBrowserCoordinates();
+
+      // 2. Validate coordinates range and accuracy upfront
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      const accuracy = pos.coords.accuracy;
+
+      if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+        throw new Error('Invalid GPS coordinates detected from device.');
+      }
+
+      if (accuracy > 100) {
+        throw new Error(`GPS accuracy is insufficient (${Math.round(accuracy)}m). Maximum allowed is 100m. Please move to an open area.`);
+      }
+
+      // 3. Dispatch to backend API
+      const res = await checkIn({
+        latitude: lat,
+        longitude: lon,
+        accuracyMeters: accuracy,
+        deviceInfo: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
+      });
+
+      if (res.success) {
+        setTodayAttendance(res.data);
+        setLastPunchResponse(res.data);
+        setAttendanceSuccess('Check-in successful!');
+        loadAttendanceHistory(0);
+      } else {
+        setAttendanceError(res.message || 'Check-in failed');
+      }
+    } catch (err) {
+      setAttendanceError(err instanceof Error ? err.message : 'Check-in failed');
+    } finally {
+      setPunchLoading(false);
+      setGpsLoading(false);
+    }
+  }
+
+  async function handleCheckOut() {
+    if (punchLoading || gpsLoading) return;
+    try {
+      setPunchLoading(true);
+      setAttendanceError('');
+      setAttendanceSuccess('');
+
+      // 1. Capture fresh GPS location
+      const pos = await getFreshBrowserCoordinates();
+
+      // 2. Validate coordinates range and accuracy upfront
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      const accuracy = pos.coords.accuracy;
+
+      if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+        throw new Error('Invalid GPS coordinates detected from device.');
+      }
+
+      if (accuracy > 100) {
+        throw new Error(`GPS accuracy is insufficient (${Math.round(accuracy)}m). Maximum allowed is 100m. Please move to an open area.`);
+      }
+
+      // 3. Dispatch to backend API
+      const res = await checkOut({
+        latitude: lat,
+        longitude: lon,
+        accuracyMeters: accuracy,
+        deviceInfo: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
+      });
+
+      if (res.success) {
+        setTodayAttendance(res.data);
+        setLastPunchResponse(res.data);
+        setAttendanceSuccess('Check-out successful!');
+        loadAttendanceHistory(0);
+      } else {
+        setAttendanceError(res.message || 'Check-out failed');
+      }
+    } catch (err) {
+      setAttendanceError(err instanceof Error ? err.message : 'Check-out failed');
+    } finally {
+      setPunchLoading(false);
+      setGpsLoading(false);
+    }
+  }
+
+  function navigateToAttendance() {
+    setScreen('attendance');
+    setSelectedEmployee(null);
+    setAttendanceError('');
+    setAttendanceSuccess('');
+    loadTodayAttendance();
+    loadAttendanceHistory(0);
+  }
+
+  function navigateToEmployees() {
+    setScreen('dashboard');
+    setAttendanceError('');
+    setAttendanceSuccess('');
+  }
+
+  function formatTime(isoString?: string): string {
+    if (!isoString) return '—';
+    try {
+      return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch { return '—'; }
+  }
+
+  function formatMinutes(mins?: number): string {
+    if (mins == null) return '—';
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return `${h}h ${m}m`;
+  }
+
+  function getStatusLabel(status?: string): string {
+    if (!status) return 'Unknown';
+    switch (status) {
+      case 'IN_PROGRESS': return 'Checked In';
+      case 'PRESENT': return 'Present';
+      case 'HALF_DAY': return 'Half Day';
+      case 'INCOMPLETE': return 'Incomplete';
+      default: return status;
+    }
+  }
+
   const updateField = (field: keyof CreateEmployeeRequest, value: string | boolean) => {
     setForm(previous => ({ ...previous, [field]: value }));
   };
@@ -552,6 +800,321 @@ async function handleUpdateEmployee(event: FormEvent) {
           </div>
           <button className="secondary-btn full-btn" onClick={handleLogout}>Sign out</button>
         </div>
+      </div>
+    );
+  }
+
+  if (screen === 'attendance') {
+    const isCheckedIn = todayAttendance?.status === 'IN_PROGRESS';
+    const isCompleted = todayAttendance?.status === 'PRESENT' || todayAttendance?.status === 'HALF_DAY' || todayAttendance?.status === 'INCOMPLETE';
+    const historyRecords: any[] = historyData?.content || [];
+
+    return (
+      <div className="app-layout">
+        <aside className="sidebar">
+          <div className="brand">HRMS<span>Pro</span></div>
+          <p className="nav-heading">WORKSPACE</p>
+          <nav>
+            <a className="nav-item" href="#">Overview</a>
+            <a className="nav-item" href="#" onClick={e => { e.preventDefault(); navigateToEmployees(); }}>Employees</a>
+            <a className="nav-item active" href="#" onClick={e => { e.preventDefault(); }}>Attendance</a>
+            <a className="nav-item" href="#">Shifts</a>
+            <a className="nav-item" href="#">Leave Management</a>
+            <a className="nav-item" href="#">Payroll</a>
+            <a className="nav-item" href="#">Departments</a>
+            <a className="nav-item" href="#">Settings</a>
+          </nav>
+          <div className="sidebar-bottom">
+            <div className="profile-avatar">A</div>
+            <div><strong>Administrator</strong><small>{tenantName}</small></div>
+          </div>
+        </aside>
+
+        <main className="main-content">
+          <header className="topbar">
+            <div>
+              <span className="breadcrumb">Workspace / Attendance</span>
+              <h2>Attendance Management</h2>
+            </div>
+            <div className="top-actions">
+              <button className="secondary-btn" onClick={handleLogout}>Sign out</button>
+            </div>
+          </header>
+
+          <section className="welcome-section">
+            <h1>Attendance</h1>
+            <p>Track check-ins, check-outs and attendance history.</p>
+          </section>
+
+          {/* Success / Error Messages */}
+          {attendanceSuccess && <div className="success-message" style={{margin: '0 24px 16px'}}>{attendanceSuccess}</div>}
+          {attendanceError && <div className="error-message" style={{margin: '0 24px 16px'}}>{attendanceError}</div>}
+
+          {/* Today's Status & Punch Section */}
+          <section className="stats-grid">
+            <div className="stat-card">
+              <span>Today's Status</span>
+              <h2>{attendanceLoading ? '...' : todayAttendance ? getStatusLabel(todayAttendance.status) : 'Not Punched'}</h2>
+              <small>{todayAttendance?.attendanceDate || new Date().toISOString().slice(0, 10)}</small>
+            </div>
+
+            <div className="stat-card">
+              <span>Check-In</span>
+              <h2>{formatTime(todayAttendance?.checkInTime)}</h2>
+              <small>{todayAttendance?.isLate ? `Late by ${todayAttendance.lateByMinutes || 0} min` : todayAttendance?.checkInTime ? 'On time' : 'Not yet'}</small>
+            </div>
+
+            <div className="stat-card">
+              <span>Check-Out</span>
+              <h2>{formatTime(todayAttendance?.checkOutTime)}</h2>
+              <small>{todayAttendance?.isEarlyDeparture ? `Early by ${todayAttendance.earlyDepartureByMinutes || 0} min` : todayAttendance?.checkOutTime ? 'Completed' : 'Pending'}</small>
+            </div>
+
+            <div className="stat-card">
+              <span>Working Hours</span>
+              <h2>{formatMinutes(todayAttendance?.netWorkDurationMinutes)}</h2>
+              <small>{todayAttendance?.scheduledWorkMinutes ? `Scheduled: ${formatMinutes(todayAttendance.scheduledWorkMinutes)}` : 'Today'}</small>
+            </div>
+          </section>
+
+          {/* Professional GPS Status Section */}
+          <section className="gps-card">
+            <div className="gps-header">
+              <div className="gps-header-title">
+                <span style={{fontSize: '20px'}}>📍</span>
+                <h3>GPS & Geofence Diagnostics</h3>
+              </div>
+              <div className="gps-badges">
+                {/* Permission Badge */}
+                {gpsPermission === 'granted' && (
+                  <span className="gps-badge success">● Location Permission Granted</span>
+                )}
+                {gpsPermission === 'denied' && (
+                  <span className="gps-badge danger">✕ Location Permission Denied</span>
+                )}
+                {gpsPermission === 'unsupported' && (
+                  <span className="gps-badge danger">✕ Geolocation Unsupported</span>
+                )}
+                {gpsPermission === 'prompt' && (
+                  <span className="gps-badge neutral">○ Location Permission Prompt</span>
+                )}
+
+                {/* GPS Accuracy Badge */}
+                {lastPosition && (
+                  lastPosition.accuracy <= 50 ? (
+                    <span className="gps-badge success">🎯 High GPS Accuracy ({Math.round(lastPosition.accuracy)}m)</span>
+                  ) : lastPosition.accuracy <= 100 ? (
+                    <span className="gps-badge warning">⚠️ Moderate GPS Accuracy ({Math.round(lastPosition.accuracy)}m)</span>
+                  ) : (
+                    <span className="gps-badge danger">✕ Poor GPS Accuracy ({Math.round(lastPosition.accuracy)}m)</span>
+                  )
+                )}
+
+                {/* Geofence Verification Status Badge */}
+                {(lastPunchResponse?.geofenceStatus === 'VERIFIED' || todayAttendance?.isGeofenceVerified) && (
+                  <span className="gps-badge success">🛡️ Inside Office Geofence</span>
+                )}
+                {lastPunchResponse?.geofenceStatus === 'OUT_OF_BOUNDS' && (
+                  <span className="gps-badge danger">✕ Outside Office Geofence</span>
+                )}
+                {lastPunchResponse?.geofenceStatus === 'NOT_APPLICABLE' && (
+                  <span className="gps-badge neutral">○ Geofence Not Applicable</span>
+                )}
+              </div>
+            </div>
+
+            <div className="gps-grid">
+              <div className="gps-item">
+                <span className="gps-item-label">GPS Detection Status</span>
+                <span className="gps-item-value">
+                  {gpsLoading ? '📡 Detecting coordinates...' : lastPosition ? 'Detected on punch' : 'Standby (on punch)'}
+                </span>
+                <span className="gps-item-sub">
+                  {lastPosition ? `Recorded ${new Date(lastPosition.timestamp).toLocaleTimeString()}` : 'High accuracy mode configured'}
+                </span>
+              </div>
+
+              <div className="gps-item">
+                <span className="gps-item-label">Reported Accuracy</span>
+                <span className="gps-item-value">
+                  {lastPosition ? `±${Math.round(lastPosition.accuracy)} metres` : '—'}
+                </span>
+                <span className="gps-item-sub">Max threshold: 100 metres</span>
+              </div>
+
+              <div className="gps-item">
+                <span className="gps-item-label">Office Distance</span>
+                <span className="gps-item-value">
+                  {lastPunchResponse?.punchDistanceMeters != null
+                    ? `${Math.round(lastPunchResponse.punchDistanceMeters)} metres`
+                    : '—'}
+                </span>
+                <span className="gps-item-sub">
+                  {lastPunchResponse?.branchName ? `Branch: ${lastPunchResponse.branchName}` : 'Calculated by server'}
+                </span>
+              </div>
+
+              <div className="gps-item">
+                <span className="gps-item-label">Last Punch Verified</span>
+                <span className="gps-item-value">
+                  {formatTime(todayAttendance?.checkOutTime || todayAttendance?.checkInTime)}
+                </span>
+                <span className="gps-item-sub">
+                  {todayAttendance?.checkOutTime ? 'Last: Check-Out' : todayAttendance?.checkInTime ? 'Last: Check-In' : 'No punch today'}
+                </span>
+              </div>
+
+              {lastPosition && (
+                <div className="gps-item">
+                  <span className="gps-item-label">Coordinates (Masked)</span>
+                  <span className="gps-item-value">
+                    {`${lastPosition.latitude.toFixed(3)}°N, ${lastPosition.longitude.toFixed(3)}°E`}
+                  </span>
+                  <span className="gps-item-sub">Privacy-conscious resolution</span>
+                </div>
+              )}
+            </div>
+          </section>
+
+
+          {/* Check-in / Check-out Actions */}
+          <section className="table-card" style={{margin: '0 24px 24px', padding: '24px'}}>
+            <div style={{display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap'}}>
+              {!isCheckedIn && !isCompleted && (
+                <button
+                  className="primary-btn"
+                  disabled={punchLoading || attendanceLoading}
+                  onClick={handleCheckIn}
+                  style={{minWidth: '140px'}}
+                >
+                  {punchLoading ? 'Punching...' : '☀️ Check In'}
+                </button>
+              )}
+
+              {isCheckedIn && (
+                <button
+                  className="primary-btn"
+                  disabled={punchLoading || attendanceLoading}
+                  onClick={handleCheckOut}
+                  style={{minWidth: '140px', background: '#dc3545'}}
+                >
+                  {punchLoading ? 'Punching...' : '🌙 Check Out'}
+                </button>
+              )}
+
+              {isCompleted && (
+                <span style={{color: '#28a745', fontWeight: 600, fontSize: '14px'}}>
+                  ✅ Today's attendance completed ({getStatusLabel(todayAttendance?.status)})
+                </span>
+              )}
+
+              <button
+                className="secondary-btn"
+                disabled={attendanceLoading}
+                onClick={() => { loadTodayAttendance(); loadAttendanceHistory(attHistoryPage); }}
+                style={{marginLeft: 'auto'}}
+              >
+                ↻ Refresh
+              </button>
+            </div>
+
+            {todayAttendance?.breaks && todayAttendance.breaks.length > 0 && (
+              <div style={{marginTop: '16px'}}>
+                <strong style={{fontSize: '13px', color: '#666'}}>Breaks Today:</strong>
+                <div style={{display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '4px'}}>
+                  {todayAttendance.breaks.map((b: any, i: number) => (
+                    <span key={i} className="status" style={{fontSize: '12px'}}>
+                      {b.breakType}: {formatTime(b.startTime)} – {b.endTime ? formatTime(b.endTime) : 'ongoing'} {b.durationMinutes != null ? `(${b.durationMinutes}m)` : ''}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* Attendance History Table */}
+          <section className="table-card">
+            <div className="table-header">
+              <div><h3>Attendance History</h3><p>Your past attendance records</p></div>
+            </div>
+
+            {historyError && <div className="error-message">{historyError}</div>}
+
+            {historyLoading ? (
+              <div className="empty-state">Loading history...</div>
+            ) : historyRecords.length === 0 ? (
+              <div className="empty-state">
+                <h3>No attendance records</h3>
+                <p>Your attendance history will appear here after you check in.</p>
+              </div>
+            ) : (
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>DATE</th>
+                      <th>EMPLOYEE</th>
+                      <th>BRANCH</th>
+                      <th>CHECK-IN</th>
+                      <th>CHECK-OUT</th>
+                      <th>WORKING HOURS</th>
+                      <th>STATUS</th>
+                      <th>LATE</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyRecords.map((rec: any) => (
+                      <tr key={rec.id}>
+                        <td>{rec.attendanceDate || '—'}</td>
+                        <td>
+                          <div className="employee-cell">
+                            <div className="employee-avatar">{rec.employeeName?.[0] || '?'}</div>
+                            <div>
+                              <strong>{rec.employeeName || '—'}</strong>
+                              <small>{rec.employeeCode || ''}</small>
+                            </div>
+                          </div>
+                        </td>
+                        <td>{rec.branchName || '—'}</td>
+                        <td>{formatTime(rec.checkInTime)}</td>
+                        <td>{formatTime(rec.checkOutTime)}</td>
+                        <td>{formatMinutes(rec.netWorkDurationMinutes)}</td>
+                        <td><span className={`status ${rec.status?.toLowerCase()}`}>{getStatusLabel(rec.status)}</span></td>
+                        <td>{rec.isLate ? `Yes (${rec.lateByMinutes || 0}m)` : 'No'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* History Pagination */}
+            {!historyLoading && historyData && historyData.totalPages > 0 && (
+              <div className="pagination">
+                <span>
+                  Page {(historyData.number ?? 0) + 1} of {historyData.totalPages}
+                  {' '}| {historyData.totalElements ?? 0} records
+                </span>
+                <div>
+                  <button
+                    className="secondary-btn"
+                    disabled={(historyData.number ?? 0) === 0 || historyLoading}
+                    onClick={() => loadAttendanceHistory((historyData.number ?? 1) - 1)}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    className="secondary-btn"
+                    disabled={(historyData.number ?? 0) >= (historyData.totalPages ?? 1) - 1 || historyLoading}
+                    onClick={() => loadAttendanceHistory((historyData.number ?? 0) + 1)}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        </main>
       </div>
     );
   }
@@ -713,6 +1276,8 @@ async function handleUpdateEmployee(event: FormEvent) {
                   <input
                     type="file"
                     required
+                    accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                    disabled={docLoading}
                     onChange={e => setUploadFile(e.target.files?.[0] || null)}
                   />
 
@@ -1026,8 +1591,8 @@ async function handleUpdateEmployee(event: FormEvent) {
         <p className="nav-heading">WORKSPACE</p>
         <nav>
           <a className="nav-item" href="#">Overview</a>
-          <a className="nav-item active" href="#">Employees</a>
-          <a className="nav-item" href="#">Attendance</a>
+          <a className={`nav-item${screen === 'dashboard' ? ' active' : ''}`} href="#" onClick={e => { e.preventDefault(); navigateToEmployees(); }}>Employees</a>
+          <a className="nav-item" href="#" onClick={e => { e.preventDefault(); navigateToAttendance(); }}>Attendance</a>
           <a className="nav-item" href="#">Shifts</a>
           <a className="nav-item" href="#">Leave Management</a>
           <a className="nav-item" href="#">Payroll</a>

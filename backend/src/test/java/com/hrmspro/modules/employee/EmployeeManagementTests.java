@@ -288,4 +288,45 @@ class EmployeeManagementTests {
         );
         assertThat(ex.getMessage()).contains("Selected department belongs to a different branch");
     }
+
+    @Test
+    @DisplayName("Branch-department validation works for employee update as well")
+    void testDepartmentBranchMismatchValidationOnUpdate() {
+        BranchDto branch2 = tenantService.createBranch(tenantA.getId(), BranchDto.builder()
+                .name("Texas Office")
+                .code("TX-01")
+                .build());
+
+        EmployeeResponseDto emp = employeeService.createEmployee(tenantA.getId(), hrUser.getId(), CreateEmployeeRequest.builder()
+                .firstName("John")
+                .lastName("Doe")
+                .joiningDate(LocalDate.now())
+                .designation("Staff")
+                .branchId(branchA.getId())
+                .departmentId(deptA.getId())
+                .build());
+
+        UpdateEmployeeRequest invalidUpdate = UpdateEmployeeRequest.builder()
+                .firstName("John")
+                .lastName("Doe")
+                .designation("Staff")
+                .branchId(branch2.getId())
+                .departmentId(deptA.getId()) // belongs to branchA
+                .build();
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+                employeeService.updateEmployee(tenantA.getId(), hrUser.getId(), emp.getId(), invalidUpdate)
+        );
+        assertThat(ex.getMessage()).contains("Selected department belongs to a different branch");
+    }
+
+    @Test
+    @DisplayName("Document download throws ResourceNotFoundException when physical file is missing")
+    void testDocumentDownloadThrowsNotFoundWhenFileMissing() {
+        com.hrmspro.common.exception.ResourceNotFoundException ex = assertThrows(
+                com.hrmspro.common.exception.ResourceNotFoundException.class,
+                () -> employeeService.getEmployeeDocumentEntity(tenantA.getId(), UUID.randomUUID(), UUID.randomUUID())
+        );
+        assertThat(ex.getMessage()).contains("Employee not found");
+    }
 }

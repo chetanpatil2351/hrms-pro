@@ -38,6 +38,25 @@ public class AttendanceService {
     private final AppUserRepository userRepository;
     private final com.hrmspro.modules.shift.ShiftAssignmentService shiftAssignmentService;
     private final com.hrmspro.modules.shift.ShiftService shiftService;
+    private final AttendanceFraudFlagRepository fraudFlagRepository;
+
+    @org.springframework.beans.factory.annotation.Value("${app.attendance.max-accuracy-meters:100.0}")
+    private double maxAccuracyMeters = 100.0;
+
+    @org.springframework.beans.factory.annotation.Value("${app.attendance.rapid-punch-threshold-seconds:60}")
+    private long rapidPunchThresholdSeconds = 60;
+
+    @org.springframework.beans.factory.annotation.Value("${app.attendance.impossible-travel-speed-kmh:300.0}")
+    private double impossibleTravelSpeedKmh = 300.0;
+
+    @org.springframework.beans.factory.annotation.Value("${app.attendance.suspicious-jump-meters:50000.0}")
+    private double suspiciousJumpMeters = 50000.0;
+
+    @org.springframework.beans.factory.annotation.Value("${app.attendance.failed-punch-flag-threshold:3}")
+    private int failedPunchFlagThreshold = 3;
+
+    // Transient in-memory tracker for consecutive failed punches: "tenantId:employeeId" -> count
+    private final java.util.concurrent.ConcurrentHashMap<String, Integer> consecutiveFailures = new java.util.concurrent.ConcurrentHashMap<>();
 
     // --- Geofence Location Management ---
 
@@ -84,9 +103,9 @@ public class AttendanceService {
             }
         }
 
-        // 2. Prevent active duplicate check-in
+        // 2. Prevent active duplicate check-in with pessimistic lock to avoid race conditions
         Optional<AttendanceRecord> inProgressRecord = recordRepository
-                .findFirstByTenantIdAndEmployeeIdAndStatusOrderByCheckInTimeDesc(tenantId, employee.getId(), "IN_PROGRESS");
+                .findFirstByTenantIdAndEmployeeIdAndStatusWithLock(tenantId, employee.getId(), "IN_PROGRESS");
         if (inProgressRecord.isPresent()) {
             throw new IllegalStateException("An active check-in session is already in progress for this employee");
         }
@@ -99,10 +118,18 @@ public class AttendanceService {
         Integer maxSession = recordRepository.findMaxSessionNumber(tenantId, employee.getId(), attendanceDate);
         int sessionNumber = (maxSession != null ? maxSession : 0) + 1;
 
-        // 3. Geofence Distance Validation
-        GeofenceEvaluation geofence = evaluateGeofence(tenantId, employee.getBranch(), request.getLatitude(), request.getLongitude(), request.getLocationId());
-
+        // 3. Geofence Distance Validation – wrap to record failures
+        GeofenceEvaluation geofence;
+        try {
+            geofence = evaluateGeofence(tenantId, employee.getBranch(), request.getLatitude(), request.getLongitude(), request.getAccuracyMeters(), request.getLocationId());
+        } catch (AccessDeniedException ex) {
+            // Record failure for repeated geofence rejections
+            recordFailure(tenantId, employee.getId(), "GEofence_FAILURE", ex.getMessage());
+            throw ex;
+        }
         if (geofence.failed && "STRICT".equalsIgnoreCase(geofence.policyMode)) {
+            // Record failure before rejecting
+            recordFailure(tenantId, employee.getId(), "GEofence_FAILURE", "Location outside geofence");
             throw new AccessDeniedException("Check-in rejected: Location is outside authorized geofence (" +
                     String.format("%.1f", geofence.distanceMeters) + "m away, limit " + geofence.radiusMeters + "m)");
         }
@@ -185,7 +212,17 @@ public class AttendanceService {
         event.setTenantId(tenantId);
         eventRepository.save(event);
 
-        return mapToResponseDto(record);
+        // 6. Evaluate anti‑fraud checks and clear failure counter on success
+        evaluatePunchIntegrity(tenantId, employee, record, event,
+                request.getLatitude(), request.getLongitude(), serverNow, request.getIsMockLocation());
+        resetFailures(tenantId, employee.getId());
+
+        // 6. Evaluate anti‑fraud checks and clear failure counter on success
+        evaluatePunchIntegrity(tenantId, employee, record, event,
+                request.getLatitude(), request.getLongitude(), serverNow, request.getIsMockLocation());
+        resetFailures(tenantId, employee.getId());
+
+        return mapToResponseDto(record, geofence);
     }
 
     @Transactional
@@ -199,10 +236,11 @@ public class AttendanceService {
             }
         }
 
-        // 1. Find active in-progress record
+        // 1. Find active in-progress record with pessimistic lock to avoid race conditions
         AttendanceRecord record = recordRepository
-                .findFirstByTenantIdAndEmployeeIdAndStatusOrderByCheckInTimeDesc(tenantId, employee.getId(), "IN_PROGRESS")
+                .findFirstByTenantIdAndEmployeeIdAndStatusWithLock(tenantId, employee.getId(), "IN_PROGRESS")
                 .orElseThrow(() -> new IllegalStateException("No active check-in session found to check out from"));
+
 
         // 2. End any open breaks
         breakRepository.findFirstByAttendanceRecordIdAndEndTimeIsNull(record.getId()).ifPresent(activeBreak -> {
@@ -213,8 +251,24 @@ public class AttendanceService {
 
         Instant serverNow = Instant.now();
 
-        // 3. Geofence Check
-        GeofenceEvaluation geofence = evaluateGeofence(tenantId, record.getBranch(), request.getLatitude(), request.getLongitude(), request.getLocationId());
+        // 3. Geofence Check – wrap to record failures
+        GeofenceEvaluation geofence;
+        try {
+            geofence = evaluateGeofence(tenantId, record.getBranch(), request.getLatitude(), request.getLongitude(), request.getAccuracyMeters(), request.getLocationId());
+        } catch (AccessDeniedException ex) {
+            recordFailure(tenantId, employee.getId(), "GEofence_FAILURE", ex.getMessage());
+            throw ex;
+        }
+        if (geofence.failed && "STRICT".equalsIgnoreCase(geofence.policyMode)) {
+            recordFailure(tenantId, employee.getId(), "GEofence_FAILURE", "Location outside geofence");
+            throw new AccessDeniedException("Check-out rejected: Location is outside authorized geofence (" +
+                    String.format("%.1f", geofence.distanceMeters) + "m away, limit " + geofence.radiusMeters + "m)");
+        }
+
+        if (geofence.failed && "STRICT".equalsIgnoreCase(geofence.policyMode)) {
+            throw new AccessDeniedException("Check-out rejected: Location is outside authorized geofence (" +
+                    String.format("%.1f", geofence.distanceMeters) + "m away, limit " + geofence.radiusMeters + "m)");
+        }
 
         // 4. Calculations
         int totalWorkMinutes = (int) Duration.between(record.getCheckInTime(), serverNow).toMinutes();
@@ -263,7 +317,12 @@ public class AttendanceService {
         event.setTenantId(tenantId);
         eventRepository.save(event);
 
-        return mapToResponseDto(record);
+        // 6. Evaluate anti‑fraud checks and clear failure counter on success
+        evaluatePunchIntegrity(tenantId, employee, record, event,
+                request.getLatitude(), request.getLongitude(), serverNow, request.getIsMockLocation());
+        resetFailures(tenantId, employee.getId());
+
+        return mapToResponseDto(record, geofence);
     }
 
     // --- Break Management ---
@@ -400,6 +459,132 @@ public class AttendanceService {
         return mapToCorrectionDto(correction);
     }
 
+    // --- Anti-Fraud & Punch Integrity Evaluation ---
+
+    private void recordFailure(UUID tenantId, UUID employeeId, String failureType, String reason) {
+        String key = tenantId.toString() + ":" + employeeId.toString();
+        int count = consecutiveFailures.compute(key, (k, v) -> (v == null ? 1 : v + 1));
+        if (count >= failedPunchFlagThreshold) {
+            Employee emp = employeeRepository.findById(employeeId).orElse(null);
+            if (emp != null) {
+                AttendanceFraudFlag flag = AttendanceFraudFlag.builder()
+                        .employee(emp)
+                        .flagType(failureType)
+                        .severity("HIGH")
+                        .reason(String.format("Repeated punch failure (%d consecutive attempts): %s", count, reason))
+                        .details(String.format("Failure threshold reached (%d attempts)", count))
+                        .status("FLAGGED")
+                        .build();
+                flag.setTenantId(tenantId);
+                fraudFlagRepository.save(flag);
+                log.warn("Created fraud flag for employee {} in tenant {}: {}", employeeId, tenantId, flag.getReason());
+            }
+        }
+    }
+
+    private void resetFailures(UUID tenantId, UUID employeeId) {
+        consecutiveFailures.remove(tenantId.toString() + ":" + employeeId.toString());
+    }
+
+    private void evaluatePunchIntegrity(
+            UUID tenantId,
+            Employee employee,
+            AttendanceRecord record,
+            AttendanceEvent event,
+            Double currentLat,
+            Double currentLon,
+            Instant currentEventTime,
+            Boolean clientReportedMock
+    ) {
+        // 1. Untrusted client mock location signal detection
+        if (Boolean.TRUE.equals(clientReportedMock)) {
+            AttendanceFraudFlag flag = AttendanceFraudFlag.builder()
+                    .employee(employee)
+                    .attendanceRecord(record)
+                    .attendanceEvent(event)
+                    .flagType("MOCK_LOCATION_REPORTED")
+                    .severity("MEDIUM")
+                    .reason("Client device reported simulated or mock location flag during punch")
+                    .details("Device indicated isMockLocation=true; unverified signal flagged for administrative review")
+                    .status("FLAGGED")
+                    .build();
+            flag.setTenantId(tenantId);
+            fraudFlagRepository.save(flag);
+        }
+
+        // 2. Consecutive punch time and distance check against previous event
+        Optional<AttendanceEvent> optPrevEvent = eventRepository.findFirstByTenantIdAndEmployeeIdOrderByEventTimeDesc(tenantId, employee.getId());
+        if (optPrevEvent.isPresent()) {
+            AttendanceEvent prevEvent = optPrevEvent.get();
+            if (prevEvent.getEventTime() != null && currentEventTime != null) {
+                long elapsedSeconds = Duration.between(prevEvent.getEventTime(), currentEventTime).abs().toSeconds();
+
+                // Rapid punch detection
+                if (elapsedSeconds < rapidPunchThresholdSeconds) {
+                    AttendanceFraudFlag flag = AttendanceFraudFlag.builder()
+                            .employee(employee)
+                            .attendanceRecord(record)
+                            .attendanceEvent(event)
+                            .flagType("RAPID_PUNCH")
+                            .severity("MEDIUM")
+                            .reason(String.format("Rapid consecutive punch detected: only %d seconds elapsed since previous punch (limit: %ds)",
+                                    elapsedSeconds, rapidPunchThresholdSeconds))
+                            .details(String.format("Previous event %s at %s, current event %s at %s",
+                                    prevEvent.getEventType(), prevEvent.getEventTime(), event.getEventType(), currentEventTime))
+                            .status("FLAGGED")
+                            .build();
+                    flag.setTenantId(tenantId);
+                    fraudFlagRepository.save(flag);
+                }
+
+                // Location travel & jump analysis
+                if (currentLat != null && currentLon != null && prevEvent.getLatitude() != null && prevEvent.getLongitude() != null) {
+                    double distance = calculateHaversineDistance(
+                            prevEvent.getLatitude(), prevEvent.getLongitude(),
+                            currentLat, currentLon
+                    );
+
+                    // Suspicious large location jump
+                    if (distance > suspiciousJumpMeters) {
+                        AttendanceFraudFlag flag = AttendanceFraudFlag.builder()
+                                .employee(employee)
+                                .attendanceRecord(record)
+                                .attendanceEvent(event)
+                                .flagType("SUSPICIOUS_JUMP")
+                                .severity("HIGH")
+                                .reason(String.format("Unusually large location displacement detected: %.1f km between consecutive punches",
+                                        distance / 1000.0))
+                                .details(String.format("Displacement: %.0f metres in %d seconds", distance, elapsedSeconds))
+                                .status("FLAGGED")
+                                .build();
+                        flag.setTenantId(tenantId);
+                        fraudFlagRepository.save(flag);
+                    }
+
+                    // Impossible travel calculation (speed > threshold)
+                    if (elapsedSeconds > 0) {
+                        double speedKmh = (distance / 1000.0) / (elapsedSeconds / 3600.0);
+                        if (speedKmh > impossibleTravelSpeedKmh) {
+                            AttendanceFraudFlag flag = AttendanceFraudFlag.builder()
+                                    .employee(employee)
+                                    .attendanceRecord(record)
+                                    .attendanceEvent(event)
+                                    .flagType("IMPOSSIBLE_TRAVEL")
+                                    .severity("CRITICAL")
+                                    .reason(String.format("Physically impossible travel speed detected: %.1f km/h (distance: %.1f km in %d sec; limit: %.0f km/h)",
+                                            speedKmh, distance / 1000.0, elapsedSeconds, impossibleTravelSpeedKmh))
+                                    .details(String.format("Speed: %.1f km/h, distance: %.0f m, elapsed: %ds", speedKmh, distance, elapsedSeconds))
+                                    .status("FLAGGED")
+                                    .build();
+                            flag.setTenantId(tenantId);
+                            fraudFlagRepository.save(flag);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // --- Geofence Haversine Calculation ---
 
     public static double calculateHaversineDistance(double lat1, double lon1, double lat2, double lon2) {
@@ -419,21 +604,51 @@ public class AttendanceService {
         Integer radiusMeters;
         String policyMode = "STRICT";
         String status = "VERIFIED";
+        String validationResult = "VALID";
         boolean failed = false;
     }
 
-    private GeofenceEvaluation evaluateGeofence(UUID tenantId, Branch branch, Double lat, Double lon, UUID locationId) {
-        GeofenceEvaluation eval = new GeofenceEvaluation();
+    private void validateCoordinatesAndAccuracy(Double lat, Double lon, Double accuracyMeters) {
         if (lat == null || lon == null) {
-            eval.status = "NOT_APPLICABLE";
-            return eval;
+            throw new IllegalArgumentException("Punch location is required: latitude and longitude must be provided");
         }
+        if (lat < -90.0 || lat > 90.0) {
+            throw new IllegalArgumentException("Invalid latitude: must be between -90.0 and 90.0 degrees");
+        }
+        if (lon < -180.0 || lon > 180.0) {
+            throw new IllegalArgumentException("Invalid longitude: must be between -180.0 and 180.0 degrees");
+        }
+        if (accuracyMeters != null) {
+            if (accuracyMeters < 0) {
+                throw new IllegalArgumentException("Invalid GPS accuracy: cannot be negative");
+            }
+            if (accuracyMeters > maxAccuracyMeters) {
+                throw new IllegalArgumentException(String.format(
+                        "GPS accuracy is too low (reported: %.1fm, maximum acceptable: %.1fm). Please move to an open area and try again.",
+                        accuracyMeters, maxAccuracyMeters));
+            }
+        }
+    }
+
+    private GeofenceEvaluation evaluateGeofence(UUID tenantId, Branch branch, Double lat, Double lon, Double accuracyMeters, UUID locationId) {
+        // 1. Strict coordinate & accuracy validation
+        validateCoordinatesAndAccuracy(lat, lon, accuracyMeters);
+
+        GeofenceEvaluation eval = new GeofenceEvaluation();
 
         List<AttendanceLocation> candidateLocations;
         if (locationId != null) {
-            candidateLocations = locationRepository.findById(locationId)
-                    .filter(l -> l.getTenantId().equals(tenantId) && l.getIsActive())
-                    .map(List::of).orElse(Collections.emptyList());
+            // Verify location belongs to the employee's branch and tenant
+            AttendanceLocation requestedLocation = locationRepository.findById(locationId)
+                    .filter(l -> l.getTenantId().equals(tenantId) && Boolean.TRUE.equals(l.getIsActive()))
+                    .orElseThrow(() -> new IllegalArgumentException("Specified attendance location not found or inactive in this company"));
+
+            if (branch != null && requestedLocation.getBranch() != null &&
+                    !requestedLocation.getBranch().getId().equals(branch.getId())) {
+                throw new AccessDeniedException("Unauthorized attendance location: location belongs to " +
+                        requestedLocation.getBranch().getName() + " rather than your assigned branch");
+            }
+            candidateLocations = List.of(requestedLocation);
         } else if (branch != null) {
             candidateLocations = locationRepository.findByTenantIdAndBranchIdAndIsActiveTrue(tenantId, branch.getId());
         } else {
@@ -442,6 +657,7 @@ public class AttendanceService {
 
         if (candidateLocations.isEmpty()) {
             eval.status = "VERIFIED"; // No geofence defined for this branch; allow
+            eval.validationResult = "NO_GEOFENCE_CONFIGURED";
             return eval;
         }
 
@@ -464,10 +680,12 @@ public class AttendanceService {
 
         if (minDistance <= eval.radiusMeters) {
             eval.status = "VERIFIED";
+            eval.validationResult = "WITHIN_GEOFENCE";
             eval.failed = false;
         } else {
             eval.failed = true;
             eval.status = "OUT_OF_BOUNDS";
+            eval.validationResult = "OUTSIDE_GEOFENCE";
         }
         return eval;
     }
@@ -487,12 +705,20 @@ public class AttendanceService {
     }
 
     private AttendanceResponseDto mapToResponseDto(AttendanceRecord r) {
+        return mapToResponseDto(r, null);
+    }
+
+    private AttendanceResponseDto mapToResponseDto(AttendanceRecord r, GeofenceEvaluation geofence) {
         List<AttendanceBreakDto> breaks = breakRepository.findByAttendanceRecordIdOrderByStartTimeAsc(r.getId()).stream()
                 .map(this::mapToBreakDto)
                 .collect(Collectors.toList());
 
         String empName = r.getEmployee() != null ?
                 (r.getEmployee().getFirstName() + " " + r.getEmployee().getLastName()).trim() : null;
+
+        Double punchDistance = geofence != null ? geofence.distanceMeters : null;
+        String geofenceStatus = geofence != null ? geofence.status : null;
+        String validationResult = geofence != null ? geofence.validationResult : null;
 
         return AttendanceResponseDto.builder()
                 .id(r.getId())
@@ -517,6 +743,9 @@ public class AttendanceService {
                 .scheduledWorkMinutes(r.getScheduledWorkMinutes())
                 .lateByMinutes(r.getLateByMinutes())
                 .earlyDepartureByMinutes(r.getEarlyDepartureByMinutes())
+                .punchDistanceMeters(punchDistance)
+                .geofenceStatus(geofenceStatus)
+                .validationResult(validationResult)
                 .breaks(breaks)
                 .build();
     }

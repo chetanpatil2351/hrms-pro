@@ -63,9 +63,14 @@ public class EmployeeService {
                     .filter(d -> d.getTenantId().equals(tenantId))
                     .orElseThrow(() -> new IllegalArgumentException("Department does not belong to this company"));
 
-            if (department.getBranch() != null && branch != null && !department.getBranch().getId().equals(branch.getId())) {
-                throw new IllegalArgumentException("Selected department belongs to a different branch (" +
-                        department.getBranch().getName() + ")");
+            if (department.getBranch() != null) {
+                if (branch == null) {
+                    throw new IllegalArgumentException("Selected department belongs to branch '" +
+                            department.getBranch().getName() + "'. Please select this branch.");
+                } else if (!department.getBranch().getId().equals(branch.getId())) {
+                    throw new IllegalArgumentException("Selected department belongs to a different branch (" +
+                            department.getBranch().getName() + ")");
+                }
             }
         }
 
@@ -219,9 +224,14 @@ public class EmployeeService {
                     .filter(d -> d.getTenantId().equals(tenantId))
                     .orElseThrow(() -> new IllegalArgumentException("Department does not belong to this company"));
 
-            if (dept.getBranch() != null && branch != null && !dept.getBranch().getId().equals(branch.getId())) {
-                throw new IllegalArgumentException("Selected department belongs to a different branch (" +
-                        dept.getBranch().getName() + ")");
+            if (dept.getBranch() != null) {
+                if (branch == null) {
+                    throw new IllegalArgumentException("Selected department belongs to branch '" +
+                            dept.getBranch().getName() + "'. Please select this branch.");
+                } else if (!dept.getBranch().getId().equals(branch.getId())) {
+                    throw new IllegalArgumentException("Selected department belongs to a different branch (" +
+                            dept.getBranch().getName() + ")");
+                }
             }
             employee.setDepartment(dept);
         } else {
@@ -336,8 +346,14 @@ public class EmployeeService {
 
     @Transactional(readOnly = true)
     public EmployeeDocument getEmployeeDocumentEntity(UUID tenantId, UUID employeeId, UUID documentId) {
+        // Explicitly verify tenant and employee existence first
+        Employee employee = employeeRepository.findById(employeeId)
+                .filter(e -> e.getTenantId().equals(tenantId))
+                .orElseThrow(() -> new ResourceNotFoundException("Employee not found in this company"));
+
+        // Verify document exists, belongs to tenant and belongs to employee
         return documentRepository.findByIdAndTenantId(documentId, tenantId)
-                .filter(doc -> doc.getEmployee().getId().equals(employeeId))
+                .filter(doc -> doc.getEmployee() != null && doc.getEmployee().getId().equals(employee.getId()))
                 .orElseThrow(() -> new ResourceNotFoundException("Document not found for this employee"));
     }
 

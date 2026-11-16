@@ -11,7 +11,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
-import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -22,6 +21,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import com.hrmspro.common.exception.ResourceNotFoundException;
 
 import java.io.File;
 import java.io.IOException;
@@ -30,6 +30,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @RestController
@@ -150,6 +152,14 @@ public class EmployeeController {
         return ResponseEntity.ok(ApiResponse.success(response, "Employee deactivated successfully"));
     }
 
+    private static final long MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+    private static final Map<String, Set<String>> ALLOWED_EXTENSIONS_AND_MIMES = Map.of(
+            "pdf", Set.of("application/pdf"),
+            "jpg", Set.of("image/jpeg", "image/jpg", "image/pjpeg"),
+            "jpeg", Set.of("image/jpeg", "image/jpg", "image/pjpeg"),
+            "png", Set.of("image/png", "image/x-png")
+    );
+
     @PostMapping(value = "/{id}/documents/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('COMPANY_ADMIN') or hasRole('HR_MANAGER')")
     @Operation(summary = "Upload physical document file for employee")
@@ -163,10 +173,39 @@ public class EmployeeController {
             throw new IllegalArgumentException("Uploaded file cannot be empty");
         }
 
+        // 1. File size limit: 5 MB
+        if (file.getSize() > MAX_FILE_SIZE_BYTES) {
+            throw new IllegalArgumentException("File size exceeds maximum allowed limit of 5 MB");
+        }
+
+        // 2 & 3. Validate file extension and content type (PDF, JPG, JPEG, PNG)
         String originalFilename = file.getOriginalFilename();
         if (originalFilename == null || originalFilename.isBlank()) {
-            originalFilename = "document_" + System.currentTimeMillis();
+            throw new IllegalArgumentException("File name must not be blank");
         }
+
+        int dotIndex = originalFilename.lastIndexOf('.');
+        if (dotIndex == -1 || dotIndex == originalFilename.length() - 1) {
+            throw new IllegalArgumentException("File must have a valid extension (.pdf, .jpg, .jpeg, .png)");
+        }
+        String extension = originalFilename.substring(dotIndex + 1).toLowerCase();
+
+        if (!ALLOWED_EXTENSIONS_AND_MIMES.containsKey(extension)) {
+            throw new IllegalArgumentException("Invalid file type: ." + extension + ". Only PDF, JPG, JPEG, and PNG files are allowed");
+        }
+
+        String rawContentType = file.getContentType();
+        String contentType = (rawContentType != null ? rawContentType.trim().toLowerCase() : "");
+        // Normalize any parameters (e.g., application/pdf;charset=UTF-8)
+        if (contentType.contains(";")) {
+            contentType = contentType.split(";")[0].trim();
+        }
+
+        Set<String> allowedMimes = ALLOWED_EXTENSIONS_AND_MIMES.get(extension);
+        if (contentType.isEmpty() || !allowedMimes.contains(contentType)) {
+            throw new IllegalArgumentException("File content type '" + rawContentType + "' does not match extension ." + extension);
+        }
+
         // Sanitize file name
         String safeFileName = originalFilename.replaceAll("[^a-zA-Z0-9._-]", "_");
 
@@ -179,8 +218,6 @@ public class EmployeeController {
         String storedFileName = UUID.randomUUID() + "_" + safeFileName;
         Path targetPath = uploadDirPath.resolve(storedFileName);
         Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
-
-        String contentType = file.getContentType() != null ? file.getContentType() : MediaType.APPLICATION_OCTET_STREAM_VALUE;
 
         EmployeeDocumentDto docDto = EmployeeDocumentDto.builder()
                 .documentType(documentType)
@@ -212,14 +249,8 @@ public class EmployeeController {
         EmployeeDocument document = employeeService.getEmployeeDocumentEntity(principal.getTenantId(), id, documentId);
 
         Path filePath = Paths.get(document.getFilePath());
-        if (!Files.exists(filePath) || !Files.isReadable(filePath)) {
-            // Fallback for metadata-only/virtual files: provide bytes with file info
-            byte[] content = ("Document: " + document.getFileName() + "\nType: " + document.getDocumentType()).getBytes();
-            ByteArrayResource resource = new ByteArrayResource(content);
-            return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType(document.getMimeType()))
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + document.getFileName() + "\"")
-                    .body(resource);
+        if (!Files.exists(filePath) || !Files.isReadable(filePath) || Files.isDirectory(filePath)) {
+            throw new ResourceNotFoundException("Document file not found or is missing from storage");
         }
 
         Resource resource = new FileSystemResource(filePath.toFile());

@@ -23,6 +23,11 @@ public class UserPrincipal implements UserDetails {
     private final Collection<? extends GrantedAuthority> authorities;
     private final boolean active;
 
+    // Helper to obtain AppUser ID; actual entity retrieval should use a service.
+    public UUID getAppUserId() {
+        return userId;
+    }
+
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return authorities;

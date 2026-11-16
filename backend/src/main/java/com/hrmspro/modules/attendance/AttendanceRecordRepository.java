@@ -21,6 +21,10 @@ public interface AttendanceRecordRepository extends JpaRepository<AttendanceReco
 
     Optional<AttendanceRecord> findFirstByTenantIdAndEmployeeIdAndStatusOrderByCheckInTimeDesc(UUID tenantId, UUID employeeId, String status);
 
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT a FROM AttendanceRecord a WHERE a.tenantId = :tenantId AND a.employee.id = :employeeId AND a.status = :status ORDER BY a.checkInTime DESC LIMIT 1")
+    Optional<AttendanceRecord> findFirstByTenantIdAndEmployeeIdAndStatusWithLock(@Param("tenantId") UUID tenantId, @Param("employeeId") UUID employeeId, @Param("status") String status);
+
     @Query("SELECT COALESCE(MAX(a.sessionNumber), 0) FROM AttendanceRecord a WHERE a.tenantId = :tenantId AND a.employee.id = :employeeId AND a.attendanceDate = :attendanceDate")
     Integer findMaxSessionNumber(@Param("tenantId") UUID tenantId, @Param("employeeId") UUID employeeId, @Param("attendanceDate") LocalDate attendanceDate);
 
