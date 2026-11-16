@@ -13,4 +13,7 @@ public interface AttendanceEventRepository extends JpaRepository<AttendanceEvent
     List<AttendanceEvent> findByAttendanceRecordIdOrderByEventTimeAsc(UUID attendanceRecordId);
     Optional<AttendanceEvent> findFirstByTenantIdAndEmployeeIdOrderByEventTimeDesc(UUID tenantId, UUID employeeId);
 
+    Optional<AttendanceEvent> findFirstByTenantIdAndEmployeeIdAndIdNotOrderByEventTimeDesc(
+        UUID tenantId, UUID employeeId, UUID excludedEventId);
+
 }

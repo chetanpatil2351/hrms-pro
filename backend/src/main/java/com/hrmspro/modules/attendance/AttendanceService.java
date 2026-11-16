@@ -124,12 +124,12 @@ public class AttendanceService {
             geofence = evaluateGeofence(tenantId, employee.getBranch(), request.getLatitude(), request.getLongitude(), request.getAccuracyMeters(), request.getLocationId());
         } catch (AccessDeniedException ex) {
             // Record failure for repeated geofence rejections
-            recordFailure(tenantId, employee.getId(), "GEofence_FAILURE", ex.getMessage());
+            recordFailure(tenantId, employee.getId(), "GEOFENCE_FAILURE", ex.getMessage());
             throw ex;
         }
         if (geofence.failed && "STRICT".equalsIgnoreCase(geofence.policyMode)) {
             // Record failure before rejecting
-            recordFailure(tenantId, employee.getId(), "GEofence_FAILURE", "Location outside geofence");
+            recordFailure(tenantId, employee.getId(), "GEOFENCE_FAILURE", "Location outside geofence");
             throw new AccessDeniedException("Check-in rejected: Location is outside authorized geofence (" +
                     String.format("%.1f", geofence.distanceMeters) + "m away, limit " + geofence.radiusMeters + "m)");
         }
@@ -217,10 +217,6 @@ public class AttendanceService {
                 request.getLatitude(), request.getLongitude(), serverNow, request.getIsMockLocation());
         resetFailures(tenantId, employee.getId());
 
-        // 6. Evaluate anti‑fraud checks and clear failure counter on success
-        evaluatePunchIntegrity(tenantId, employee, record, event,
-                request.getLatitude(), request.getLongitude(), serverNow, request.getIsMockLocation());
-        resetFailures(tenantId, employee.getId());
 
         return mapToResponseDto(record, geofence);
     }
@@ -256,16 +252,11 @@ public class AttendanceService {
         try {
             geofence = evaluateGeofence(tenantId, record.getBranch(), request.getLatitude(), request.getLongitude(), request.getAccuracyMeters(), request.getLocationId());
         } catch (AccessDeniedException ex) {
-            recordFailure(tenantId, employee.getId(), "GEofence_FAILURE", ex.getMessage());
+            recordFailure(tenantId, employee.getId(), "GEOFENCE_FAILURE", ex.getMessage());
             throw ex;
         }
         if (geofence.failed && "STRICT".equalsIgnoreCase(geofence.policyMode)) {
-            recordFailure(tenantId, employee.getId(), "GEofence_FAILURE", "Location outside geofence");
-            throw new AccessDeniedException("Check-out rejected: Location is outside authorized geofence (" +
-                    String.format("%.1f", geofence.distanceMeters) + "m away, limit " + geofence.radiusMeters + "m)");
-        }
-
-        if (geofence.failed && "STRICT".equalsIgnoreCase(geofence.policyMode)) {
+            recordFailure(tenantId, employee.getId(), "GEOFENCE_FAILURE", "Location outside geofence");
             throw new AccessDeniedException("Check-out rejected: Location is outside authorized geofence (" +
                     String.format("%.1f", geofence.distanceMeters) + "m away, limit " + geofence.radiusMeters + "m)");
         }
@@ -512,80 +503,100 @@ public class AttendanceService {
             fraudFlagRepository.save(flag);
         }
 
-        // 2. Consecutive punch time and distance check against previous event
-        Optional<AttendanceEvent> optPrevEvent = eventRepository.findFirstByTenantIdAndEmployeeIdOrderByEventTimeDesc(tenantId, employee.getId());
-        if (optPrevEvent.isPresent()) {
-            AttendanceEvent prevEvent = optPrevEvent.get();
-            if (prevEvent.getEventTime() != null && currentEventTime != null) {
-                long elapsedSeconds = Duration.between(prevEvent.getEventTime(), currentEventTime).abs().toSeconds();
+    // 2. Consecutive punch time and distance check against previous event
+    Optional<AttendanceEvent> optPrevEvent =
+            eventRepository.findFirstByTenantIdAndEmployeeIdAndIdNotOrderByEventTimeDesc(
+                    tenantId, employee.getId(), event.getId());
 
-                // Rapid punch detection
-                if (elapsedSeconds < rapidPunchThresholdSeconds) {
+    if (optPrevEvent.isPresent()) {
+        AttendanceEvent prevEvent = optPrevEvent.get();
+
+        if (prevEvent.getEventTime() != null && currentEventTime != null) {
+            long elapsedSeconds = Duration.between(
+                    prevEvent.getEventTime(), currentEventTime
+            ).abs().toSeconds();
+
+            // Rapid punch detection
+            if (elapsedSeconds < rapidPunchThresholdSeconds) {
+                AttendanceFraudFlag flag = AttendanceFraudFlag.builder()
+                        .employee(employee)
+                        .attendanceRecord(record)
+                        .attendanceEvent(event)
+                        .flagType("RAPID_PUNCH")
+                        .severity("MEDIUM")
+                        .reason(String.format(
+                                "Rapid consecutive punch detected: only %d seconds elapsed since previous punch (limit: %ds)",
+                                elapsedSeconds, rapidPunchThresholdSeconds))
+                        .details(String.format(
+                                "Previous event %s at %s, current event %s at %s",
+                                prevEvent.getEventType(), prevEvent.getEventTime(),
+                                event.getEventType(), currentEventTime))
+                        .status("FLAGGED")
+                        .build();
+
+                flag.setTenantId(tenantId);
+                fraudFlagRepository.save(flag);
+            }
+
+            // Location travel & jump analysis
+            if (currentLat != null && currentLon != null
+                    && prevEvent.getLatitude() != null && prevEvent.getLongitude() != null) {
+
+                double distance = calculateHaversineDistance(
+                        prevEvent.getLatitude(), prevEvent.getLongitude(),
+                        currentLat, currentLon);
+
+                // Suspicious large location jump
+                if (distance > suspiciousJumpMeters) {
                     AttendanceFraudFlag flag = AttendanceFraudFlag.builder()
                             .employee(employee)
                             .attendanceRecord(record)
                             .attendanceEvent(event)
-                            .flagType("RAPID_PUNCH")
-                            .severity("MEDIUM")
-                            .reason(String.format("Rapid consecutive punch detected: only %d seconds elapsed since previous punch (limit: %ds)",
-                                    elapsedSeconds, rapidPunchThresholdSeconds))
-                            .details(String.format("Previous event %s at %s, current event %s at %s",
-                                    prevEvent.getEventType(), prevEvent.getEventTime(), event.getEventType(), currentEventTime))
+                            .flagType("SUSPICIOUS_JUMP")
+                            .severity("HIGH")
+                            .reason(String.format(
+                                    "Unusually large location displacement detected: %.1f km between consecutive punches",
+                                    distance / 1000.0))
+                            .details(String.format(
+                                    "Displacement: %.0f metres in %d seconds",
+                                    distance, elapsedSeconds))
                             .status("FLAGGED")
                             .build();
+
                     flag.setTenantId(tenantId);
                     fraudFlagRepository.save(flag);
                 }
 
-                // Location travel & jump analysis
-                if (currentLat != null && currentLon != null && prevEvent.getLatitude() != null && prevEvent.getLongitude() != null) {
-                    double distance = calculateHaversineDistance(
-                            prevEvent.getLatitude(), prevEvent.getLongitude(),
-                            currentLat, currentLon
-                    );
+                // Impossible travel calculation
+                if (elapsedSeconds > 0) {
+                    double speedKmh = (distance / 1000.0) / (elapsedSeconds / 3600.0);
 
-                    // Suspicious large location jump
-                    if (distance > suspiciousJumpMeters) {
+                    if (speedKmh > impossibleTravelSpeedKmh) {
                         AttendanceFraudFlag flag = AttendanceFraudFlag.builder()
                                 .employee(employee)
                                 .attendanceRecord(record)
                                 .attendanceEvent(event)
-                                .flagType("SUSPICIOUS_JUMP")
-                                .severity("HIGH")
-                                .reason(String.format("Unusually large location displacement detected: %.1f km between consecutive punches",
-                                        distance / 1000.0))
-                                .details(String.format("Displacement: %.0f metres in %d seconds", distance, elapsedSeconds))
+                                .flagType("IMPOSSIBLE_TRAVEL")
+                                .severity("CRITICAL")
+                                .reason(String.format(
+                                        "Physically impossible travel speed detected: %.1f km/h (distance: %.1f km in %d sec; limit: %.0f km/h)",
+                                        speedKmh, distance / 1000.0,
+                                        elapsedSeconds, impossibleTravelSpeedKmh))
+                                .details(String.format(
+                                        "Speed: %.1f km/h, distance: %.0f m, elapsed: %ds",
+                                        speedKmh, distance, elapsedSeconds))
                                 .status("FLAGGED")
                                 .build();
+
                         flag.setTenantId(tenantId);
                         fraudFlagRepository.save(flag);
-                    }
-
-                    // Impossible travel calculation (speed > threshold)
-                    if (elapsedSeconds > 0) {
-                        double speedKmh = (distance / 1000.0) / (elapsedSeconds / 3600.0);
-                        if (speedKmh > impossibleTravelSpeedKmh) {
-                            AttendanceFraudFlag flag = AttendanceFraudFlag.builder()
-                                    .employee(employee)
-                                    .attendanceRecord(record)
-                                    .attendanceEvent(event)
-                                    .flagType("IMPOSSIBLE_TRAVEL")
-                                    .severity("CRITICAL")
-                                    .reason(String.format("Physically impossible travel speed detected: %.1f km/h (distance: %.1f km in %d sec; limit: %.0f km/h)",
-                                            speedKmh, distance / 1000.0, elapsedSeconds, impossibleTravelSpeedKmh))
-                                    .details(String.format("Speed: %.1f km/h, distance: %.0f m, elapsed: %ds", speedKmh, distance, elapsedSeconds))
-                                    .status("FLAGGED")
-                                    .build();
-                            flag.setTenantId(tenantId);
-                            fraudFlagRepository.save(flag);
-                        }
                     }
                 }
             }
         }
     }
-
-    // --- Geofence Haversine Calculation ---
+}
+// --- Geofence Haversine Calculation ---
 
     public static double calculateHaversineDistance(double lat1, double lon1, double lat2, double lon2) {
         final int R = 6371000; // Radius of the Earth in meters

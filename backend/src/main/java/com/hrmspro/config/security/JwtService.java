@@ -22,7 +22,7 @@ public class JwtService {
     private final long accessTokenExpirationMs;
 
     public JwtService(
-            @Value("${app.jwt.secret:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}") String secret,
+            @Value("${app.jwt.secret}") String secret,
             @Value("${app.jwt.access-token-expiration-ms:900000}") long accessTokenExpirationMs
     ) {
         byte[] keyBytes;
