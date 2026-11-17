@@ -23,7 +23,31 @@ public class PayrollController {
 
     private final PayrollService payrollService;
 
-    // --- Statutory Rules ---
+    // --- Preview ---
+    @PostMapping("/periods/{id}/preview")
+    @PreAuthorize("hasAuthority('ADMIN') or hasAuthority('HR_MANAGER')")
+    public ResponseEntity<ApiResponse<PayrollPreviewDto>> previewPayroll(@PathVariable UUID id) {
+        PayrollPreviewDto preview = payrollService.previewPayrollRun(id);
+        return ResponseEntity.ok(ApiResponse.success(preview, "Payroll preview generated successfully"));
+    }
+
+    // --- History: list runs for a period ---
+    @GetMapping("/periods/{id}/runs")
+    @PreAuthorize("hasAuthority('ADMIN') or hasAuthority('HR_MANAGER')")
+    public ResponseEntity<ApiResponse<List<PayrollRunDto>>> getPeriodRuns(@PathVariable UUID id) {
+        List<PayrollRunDto> runs = payrollService.listRuns(id);
+        return ResponseEntity.ok(ApiResponse.success(runs));
+    }
+
+    // --- History: run details ---
+    @GetMapping("/runs/{runId}")
+    @PreAuthorize("hasAuthority('ADMIN') or hasAuthority('HR_MANAGER')")
+    public ResponseEntity<ApiResponse<PayrollRunResultDto>> getRunDetails(@PathVariable UUID runId) {
+        PayrollRunResultDto details = payrollService.getRunDetails(runId);
+        return ResponseEntity.ok(ApiResponse.success(details));
+    }
+
+    // Existing endpoints (statutory rules, periods, calculate, approve, finalize, adjustments) follow below...
 
     @PostMapping("/statutory-rules")
     @PreAuthorize("hasAuthority('ADMIN') or hasAuthority('HR_MANAGER')")

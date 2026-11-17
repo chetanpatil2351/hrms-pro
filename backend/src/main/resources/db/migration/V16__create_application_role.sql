@@ -3,6 +3,9 @@
 -- HRMS Pro Migration V16: Create non-superuser application role
 -- ====================================================================
 
+-- Create the role if it does not already exist.
+-- NOSUPERUSER, NOCREATEDB, NOCREATEROLE, NOREPLICATION are PostgreSQL keywords
+-- that must be written without spaces (NO SUPERUSER is invalid syntax).
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -13,19 +16,22 @@ BEGIN
             NOINHERIT
             NOCREATEDB
             NOCREATEROLE
-            NOREPLICATION;
+            NOREPLICATION
+            NOSUPERUSER
+            NOBYPASSRLS;
     END IF;
 END $$;
 
--- Application role must be able to authenticate,
--- but must never bypass PostgreSQL RLS.
+-- Ensure correct attributes regardless of whether the role was just created
+-- or already existed from a previous partial run.
+-- Note: ALTER ROLE uses the same no-space keywords as CREATE ROLE.
 ALTER ROLE hrms_app
     LOGIN
-    NO SUPERUSER
-    NO CREATEDB
-    NO CREATEROLE
-    NO REPLICATION
-    NO BYPASSRLS;
+    NOSUPERUSER
+    NOCREATEDB
+    NOCREATEROLE
+    NOREPLICATION
+    NOBYPASSRLS;
 
 -- Database and schema access
 GRANT CONNECT ON DATABASE hrms_db TO hrms_app;

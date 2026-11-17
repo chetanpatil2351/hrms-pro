@@ -31,6 +31,8 @@ import {
 } from './services/employeeService';
 import { getTodayAttendance, getAttendanceHistory, checkIn, checkOut, type AttendanceResponseDto } from './services/attendanceService';
 import './App.css';
+import ShiftManagement from './ShiftManagement';
+import PayrollManagement from './payroll/PayrollManagement';
 
 function App() {
   const [token, setToken] = useState(() => localStorage.getItem('accessToken'));
@@ -74,7 +76,9 @@ function App() {
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   // State for screen navigation
-  const [screen, setScreen] = useState<'login' | 'companies' | 'dashboard' | 'attendance'>(
+  const [screen, setScreen] = useState<
+    'login' | 'companies' | 'dashboard' | 'attendance' | 'shifts' | 'payroll'
+  >(  
     token && tenantId ? 'dashboard' : 'login'
   );
   // Attendance pagination
@@ -803,6 +807,30 @@ async function handleUpdateEmployee(event: FormEvent) {
       </div>
     );
   }
+  if (screen === 'shifts') {
+    return (
+      <ShiftManagement
+        tenantName={tenantName}
+        onBack={navigateToEmployees}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
+  if (screen === 'payroll') {
+    return (
+      <PayrollManagement
+        tenantName={tenantName}
+        onBack={navigateToEmployees}
+        onLogout={handleLogout}
+        onNavigateToAttendance={navigateToAttendance}
+        onNavigateToShifts={() => {
+          setScreen('shifts');
+          setSelectedEmployee(null);
+        }}
+      />
+    );
+  }
 
   if (screen === 'attendance') {
     const isCheckedIn = todayAttendance?.status === 'IN_PROGRESS';
@@ -818,9 +846,29 @@ async function handleUpdateEmployee(event: FormEvent) {
             <a className="nav-item" href="#">Overview</a>
             <a className="nav-item" href="#" onClick={e => { e.preventDefault(); navigateToEmployees(); }}>Employees</a>
             <a className="nav-item active" href="#" onClick={e => { e.preventDefault(); }}>Attendance</a>
-            <a className="nav-item" href="#">Shifts</a>
+            <a
+                className="nav-item"
+                href="#"
+                onClick={e => {
+                  e.preventDefault();
+                  setScreen('shifts');
+                  setSelectedEmployee(null);
+                }}
+              >
+                Shifts
+              </a>
             <a className="nav-item" href="#">Leave Management</a>
-            <a className="nav-item" href="#">Payroll</a>
+            <a
+              className="nav-item"
+              href="#"
+              onClick={e => {
+                e.preventDefault();
+                setScreen('payroll');
+                setSelectedEmployee(null);
+              }}
+            >
+              Payroll
+            </a>
             <a className="nav-item" href="#">Departments</a>
             <a className="nav-item" href="#">Settings</a>
           </nav>
@@ -1593,9 +1641,29 @@ async function handleUpdateEmployee(event: FormEvent) {
           <a className="nav-item" href="#">Overview</a>
           <a className={`nav-item${screen === 'dashboard' ? ' active' : ''}`} href="#" onClick={e => { e.preventDefault(); navigateToEmployees(); }}>Employees</a>
           <a className="nav-item" href="#" onClick={e => { e.preventDefault(); navigateToAttendance(); }}>Attendance</a>
-          <a className="nav-item" href="#">Shifts</a>
+          <a
+            className="nav-item"
+            href="#"
+            onClick={e => {
+              e.preventDefault();
+              setScreen('shifts');
+              setSelectedEmployee(null);
+            }}
+          >
+            Shifts
+          </a>
           <a className="nav-item" href="#">Leave Management</a>
-          <a className="nav-item" href="#">Payroll</a>
+          <a
+            className="nav-item"
+            href="#"
+            onClick={e => {
+              e.preventDefault();
+              setScreen('payroll');
+              setSelectedEmployee(null);
+            }}
+          >
+            Payroll
+          </a>
           <a className="nav-item" href="#">Departments</a>
           <a className="nav-item" href="#">Settings</a>
         </nav>

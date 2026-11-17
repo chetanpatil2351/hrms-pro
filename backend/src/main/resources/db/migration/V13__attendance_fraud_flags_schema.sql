@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS attendance_fraud_flags (
     details TEXT,
     
     status VARCHAR(50) NOT NULL DEFAULT 'FLAGGED', -- FLAGGED, UNDER_REVIEW, RESOLVED, DISMISSED
-    reviewed_by UUID REFERENCES app_users(id) ON DELETE SET NULL,
+    reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
     reviewed_at TIMESTAMPTZ,
     review_remarks TEXT,
     
