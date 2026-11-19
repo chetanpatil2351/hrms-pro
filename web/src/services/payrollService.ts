@@ -2,7 +2,24 @@ import { apiRequest } from './api';
 import type { ApiResponse } from './employeeService';
 
 // ==========================================
-// Types & Interfaces
+export interface FailedEmployeeDto {
+  employeeCode: string;
+  reason: string;
+}
+
+export interface PayrollRunResultDto {
+  runId: string;
+  periodId: string;
+  runNumber: number;
+  runType: string;
+  status: string;
+  processedEmployees: number;
+  totalGross: number;
+  totalDeductions: number;
+  totalNet: number;
+  employeeSummaries: EmployeePayrollSummaryDto[];
+  failedEmployees?: FailedEmployeeDto[];
+}
 // ==========================================
 
 export interface PayrollPeriodDto {
@@ -66,18 +83,6 @@ export interface PayrollRunDto {
   totalNet: number;
 }
 
-export interface PayrollRunResultDto {
-  runId: string;
-  periodId: string;
-  runNumber: number;
-  runType: string;
-  status: string;
-  processedEmployees: number;
-  totalGross: number;
-  totalDeductions: number;
-  totalNet: number;
-  employeeSummaries: EmployeePayrollSummaryDto[];
-}
 
 export interface SalaryComponentDto {
   id: string;

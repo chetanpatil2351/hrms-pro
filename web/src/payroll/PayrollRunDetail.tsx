@@ -493,7 +493,38 @@ export default function PayrollRunDetail({
               </div>
             )}
 
-            {/* Pagination */}
+                    {/* Failed / Skipped Employees Section */}
+        {runDetails.failedEmployees && runDetails.failedEmployees.length > 0 ? (
+          <section className="table-card" style={{ marginTop: '20px' }}>
+            <div className="table-header">
+              <h3>Failed / Skipped Employees</h3>
+            </div>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>EMPLOYEE CODE</th>
+                    <th>REASON</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runDetails.failedEmployees.map((fe) => (
+                    <tr key={fe.employeeCode}>
+                      <td>{fe.employeeCode}</td>
+                      <td>{fe.reason}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ) : (
+          <section className="table-card" style={{ marginTop: '20px' }}>
+            <div className="empty-state">
+              <p>No failed or skipped employees.</p>
+            </div>
+          </section>
+        )}
             {totalPages > 1 && (
               <div className="pagination" style={{ marginTop: '16px' }}>
                 <span>

@@ -49,6 +49,9 @@ public class PayrollRun extends BaseTenantEntity {
     @Column(columnDefinition = "TEXT")
     private String notes;
 
+    @Column(name = "failed_employees_json", columnDefinition = "TEXT")
+    private String failedEmployeesJson;
+
     @Builder.Default
     @OneToMany(mappedBy = "payrollRun", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<PayrollRunEmployee> employees = new ArrayList<>();

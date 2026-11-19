@@ -24,6 +24,7 @@ public class PayrollRunResultDto {
     private BigDecimal totalDeductions;
     private BigDecimal totalNet;
     private List<EmployeePayrollSummaryDto> employeeSummaries;
+    private List<FailedEmployeeDto> failedEmployees;
 
     @Data
     @Builder
@@ -41,6 +42,15 @@ public class PayrollRunResultDto {
         private BigDecimal employerContributions;
         private BigDecimal netSalary;
         private List<LineItemDto> lineItems;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class FailedEmployeeDto {
+        private String employeeCode;
+        private String reason;
     }
 
     @Data

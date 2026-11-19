@@ -1,6 +1,8 @@
 
 package com.hrmspro.modules.payroll;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hrmspro.common.context.TenantContext;
 import com.hrmspro.common.exception.ResourceNotFoundException;
@@ -21,6 +23,16 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.*;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.math.RoundingMode;
+import com.hrmspro.modules.payroll.entity.SalaryAdvance;
+import com.hrmspro.modules.payroll.entity.SalaryAdvanceStatus;
+import com.hrmspro.modules.payroll.entity.SalaryAdvanceRepayment;
+import com.hrmspro.modules.payroll.entity.PayrollLineItem;
+
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -29,6 +41,8 @@ import java.util.stream.Collectors;
 public class PayrollService {
 
     private final PayrollPeriodRepository periodRepository;
+    private final SalaryAdvanceRepository salaryAdvanceRepository;
+    private final SalaryAdvanceRepaymentRepository salaryAdvanceRepaymentRepository;
     private final PayrollRunRepository runRepository;
     private final PayrollRunEmployeeRepository runEmployeeRepository;
     private final PayrollLineItemRepository lineItemRepository;
@@ -52,7 +66,195 @@ public class PayrollService {
     }
 
     // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
+    // =========================================================
     // STATUTORY RULES
+    // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
     // =========================================================
 
     @Transactional
@@ -99,7 +301,195 @@ public class PayrollService {
     }
 
     // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
+    // =========================================================
     // PAYROLL PERIOD MANAGEMENT
+    // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
     // =========================================================
 
     @Transactional
@@ -155,7 +545,195 @@ public class PayrollService {
     }
 
     // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
+    // =========================================================
     // PAYROLL PREVIEW - NO DATABASE WRITES
+    // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
     // =========================================================
 
     @Transactional(readOnly = true)
@@ -186,8 +764,58 @@ public class PayrollService {
         BigDecimal totalNet = BigDecimal.ZERO;
 
         List<PayrollPreviewDto.EmployeePayrollSummaryDto> summaries = new ArrayList<>();
+        // placeholders for preview (no persistence)
+        PayrollRun run = null;
+        List<PayrollRunResultDto.FailedEmployeeDto> failures = new ArrayList<>();
 
         for (Employee emp : employees) {
+            try {
+
+                PayrollCalculationEngine.CalculationResult calc =
+                        calculationEngine.calculateEmployeePayroll(tenantId, emp, period);
+
+                PayrollRunEmployee runEmp = PayrollRunEmployee.builder()
+                        .payrollRun(run)
+                        .employee(emp)
+                        .totalDays(calc.getTotalDaysInMonth())
+                        .payableDays(calc.getPayableDays())
+                        .unpaidLeaveDays(calc.getUnpaidLeaveDays())
+                        .workedDays(calc.getWorkedDays())
+                        .holidaysAndWeeklyOffs(calc.getHolidaysAndWeeklyOffs())
+                        .grossEarnings(calc.getGrossEarnings())
+                        .totalDeductions(calc.getTotalDeductions())
+                        .employerContributions(calc.getEmployerContributions())
+                        .netSalary(calc.getNetSalary())
+                        .isFrozen(false)
+                        .build();
+
+                runEmp.setTenantId(tenantId);
+                runEmp = runEmployeeRepository.save(runEmp);
+
+                for (PayrollLineItem li : calc.getLineItems()) {
+                    li.setPayrollRunEmployee(runEmp);
+                    lineItemRepository.save(li);
+                }
+
+                List<PayrollRunResultDto.LineItemDto> lineItemDtos = calc.getLineItems().stream()
+                        .map(li -> PayrollRunResultDto.LineItemDto.builder()
+                                .componentCode(li.getComponentCode())
+                                .componentName(li.getComponentName())
+                                .type(li.getType())
+                                .amount(li.getAmount())
+                                .build())
+                        .collect(Collectors.toList());
+
+
+
+
+
+
+                // Record successful employee for count
+            } catch (Exception ex) {
+                log.warn("Skipping payroll calculation for employee {}: {}", emp.getEmployeeCode(), ex.getMessage());
+                failures.add(new PayrollRunResultDto.FailedEmployeeDto(emp.getEmployeeCode(), ex.getMessage()));
+            }
             try {
 
                 PayrollCalculationEngine.CalculationResult calc =
@@ -240,7 +868,195 @@ public class PayrollService {
     }
 
     // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
+    // =========================================================
     // PAYROLL RUN HISTORY
+    // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
     // =========================================================
 
     @Transactional(readOnly = true)
@@ -291,7 +1107,195 @@ public class PayrollService {
     }
 
     // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
+    // =========================================================
     // PAYROLL RUN DETAILS
+    // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
     // =========================================================
 
     @Transactional(readOnly = true)
@@ -307,6 +1311,7 @@ public class PayrollService {
                 runEmployeeRepository.findByPayrollRunId(run.getId());
 
         List<PayrollRunResultDto.EmployeePayrollSummaryDto> summaries = new ArrayList<>();
+        List<PayrollRunResultDto.FailedEmployeeDto> failures = new ArrayList<>();
 
         for (PayrollRunEmployee re : runEmployees) {
 
@@ -369,10 +1374,198 @@ public class PayrollService {
     }
 
     // =========================================================
-    // CALCULATE PAYROLL
+    // SALARY ADVANCE REPAYMENT INTEGRATION
     // =========================================================
 
-    @Transactional
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
+    // =========================================================
+    // CALCULATE PAYROLL
+    // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
+    // =========================================================
+
+    @Transactional(rollbackFor = JsonProcessingException.class)
     public PayrollRunResultDto calculatePayrollRun(UUID periodId, UUID currentUserId) {
 
         UUID tenantId = getRequiredTenantId();
@@ -393,7 +1586,6 @@ public class PayrollService {
         }
 
         period.setStatus("PROCESSING");
-        periodRepository.save(period);
 
         AppUser initiator = currentUserId != null
                 ? appUserRepository.findById(currentUserId).orElse(null)
@@ -426,8 +1618,56 @@ public class PayrollService {
         BigDecimal runTotalEmployerCost = BigDecimal.ZERO;
 
         List<PayrollRunResultDto.EmployeePayrollSummaryDto> summaries = new ArrayList<>();
+        List<PayrollRunResultDto.FailedEmployeeDto> failures = new ArrayList<>();
 
         for (Employee emp : employees) {
+            try {
+
+                PayrollCalculationEngine.CalculationResult calc =
+                        calculationEngine.calculateEmployeePayroll(tenantId, emp, period);
+
+                PayrollRunEmployee runEmp = PayrollRunEmployee.builder()
+                        .payrollRun(run)
+                        .employee(emp)
+                        .totalDays(calc.getTotalDaysInMonth())
+                        .payableDays(calc.getPayableDays())
+                        .unpaidLeaveDays(calc.getUnpaidLeaveDays())
+                        .workedDays(calc.getWorkedDays())
+                        .holidaysAndWeeklyOffs(calc.getHolidaysAndWeeklyOffs())
+                        .grossEarnings(calc.getGrossEarnings())
+                        .totalDeductions(calc.getTotalDeductions())
+                        .employerContributions(calc.getEmployerContributions())
+                        .netSalary(calc.getNetSalary())
+                        .isFrozen(false)
+                        .build();
+
+                runEmp.setTenantId(tenantId);
+                runEmp = runEmployeeRepository.save(runEmp);
+
+                for (PayrollLineItem li : calc.getLineItems()) {
+                    li.setPayrollRunEmployee(runEmp);
+                    lineItemRepository.save(li);
+                }
+
+                List<PayrollRunResultDto.LineItemDto> lineItemDtos = calc.getLineItems().stream()
+                        .map(li -> PayrollRunResultDto.LineItemDto.builder()
+                                .componentCode(li.getComponentCode())
+                                .componentName(li.getComponentName())
+                                .type(li.getType())
+                                .amount(li.getAmount())
+                                .build())
+                        .collect(Collectors.toList());
+
+
+
+
+
+
+                // Record successful employee for count
+            } catch (Exception ex) {
+                log.warn("Skipping payroll calculation for employee {}: {}", emp.getEmployeeCode(), ex.getMessage());
+                failures.add(new PayrollRunResultDto.FailedEmployeeDto(emp.getEmployeeCode(), ex.getMessage()));
+            }
             try {
 
                 PayrollCalculationEngine.CalculationResult calc =
@@ -465,6 +1705,7 @@ public class PayrollService {
                 snapshot.setTenantId(tenantId);
                 snapshotRepository.save(snapshot);
 
+                applySalaryAdvanceRepayments(runEmp, run, tenantId);
                 runTotalGross = runTotalGross.add(calc.getGrossEarnings());
                 runTotalDeductions = runTotalDeductions.add(calc.getTotalDeductions());
                 runTotalNet = runTotalNet.add(calc.getNetSalary());
@@ -504,6 +1745,17 @@ public class PayrollService {
             }
         }
 
+        // Adjust aggregate totals to include salary‑advance repayments
+        // Sum all repayment amounts for this payroll run (tenant‑scoped)
+        BigDecimal repaymentTotal = salaryAdvanceRepaymentRepository
+                .findByPayrollRun_IdAndTenantId(run.getId(), tenantId)
+                .stream()
+                .map(SalaryAdvanceRepayment::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        // Add repayments to deductions and subtract from net salary
+        runTotalDeductions = runTotalDeductions.add(repaymentTotal);
+        runTotalNet = runTotalNet.subtract(repaymentTotal);
+
         run.setStatus("COMPLETED");
         run.setCompletedAt(Instant.now());
         runRepository.save(run);
@@ -513,7 +1765,6 @@ public class PayrollService {
         period.setTotalGrossPay(runTotalGross);
         period.setTotalNetPay(runTotalNet);
         period.setTotalEmployerCost(runTotalEmployerCost);
-        periodRepository.save(period);
 
         return PayrollRunResultDto.builder()
                 .runId(run.getId())
@@ -530,7 +1781,195 @@ public class PayrollService {
     }
 
     // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
+    // =========================================================
     // APPROVAL
+    // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
     // =========================================================
 
     @Transactional
@@ -548,6 +1987,17 @@ public class PayrollService {
                             + period.getStatus());
         }
 
+        // Fetch latest payroll run for this period
+        List<PayrollRun> runs = runRepository.findByPayrollPeriodIdOrderByRunNumberDesc(period.getId());
+        if (runs.isEmpty()) {
+            throw new IllegalStateException("No payroll run found for period; cannot approve.");
+        }
+        PayrollRun latestRun = runs.get(0);
+        List<PayrollRunEmployee> runEmployees = runEmployeeRepository.findByPayrollRunId(latestRun.getId());
+        if (runEmployees.isEmpty()) {
+            throw new IllegalStateException("Cannot approve payroll period: no employees were successfully calculated.");
+        }
+
         period.setStatus("APPROVED");
         period = periodRepository.save(period);
 
@@ -555,7 +2005,195 @@ public class PayrollService {
     }
 
     // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
+    // =========================================================
     // FINALIZATION AND PAYSLIP GENERATION
+    // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
     // =========================================================
 
     @Transactional
@@ -591,6 +2229,11 @@ public class PayrollService {
 
             List<PayrollRunEmployee> runEmps =
                     runEmployeeRepository.findByPayrollRunId(latestRun.getId());
+
+            // Guard against finalizing a period where the latest run processed zero employees
+            if (runEmps.isEmpty()) {
+                throw new IllegalStateException("Cannot finalize payroll period: no employees were successfully calculated.");
+            }
 
             for (PayrollRunEmployee re : runEmps) {
 
@@ -659,7 +2302,195 @@ public class PayrollService {
     }
 
     // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
+    // =========================================================
     // PAYROLL ADJUSTMENTS
+    // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
     // =========================================================
 
     @Transactional
@@ -712,7 +2543,195 @@ public class PayrollService {
     }
 
     // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
+    // =========================================================
     // PAYSLIPS
+    // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
     // =========================================================
 
     @Transactional(readOnly = true)
@@ -745,7 +2764,195 @@ public class PayrollService {
     }
 
     // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
+    // =========================================================
     // DTO MAPPERS
+    // =========================================================
+    // SALARY ADVANCE REPAYMENT INTEGRATION
+    // =========================================================
+
+    /**
+     * Apply salary‑advance repayments for the given employee during a payroll run.
+     * This method is called inside {@link #calculatePayrollRun(UUID, UUID)} for each
+     * {@link PayrollRunEmployee}. It creates deduction line items, persists repayment
+     * records and updates the advance status and outstanding balance.
+     */
+    private void applySalaryAdvanceRepayments(PayrollRunEmployee runEmp,
+                                              PayrollRun run,
+                                              UUID tenantId) {
+        // Fetch eligible advances for the tenant
+        List<SalaryAdvance> eligibleAdvances = salaryAdvanceRepository.findEligibleForPayrollRecovery(tenantId);
+
+        // Payroll period end date determines when repayments start
+        LocalDate periodEnd = run.getPayrollPeriod().getEndDate();
+
+        for (SalaryAdvance advance : eligibleAdvances) {
+            // Only advances belonging to the current employee
+            if (!advance.getEmployee().getId().equals(runEmp.getEmployee().getId())) {
+                continue;
+            }
+            // Repayment must have started
+            if (advance.getRepaymentStartDate() == null ||
+                advance.getRepaymentStartDate().isAfter(periodEnd)) {
+                continue;
+            }
+            // Prevent duplicate deductions for the same payroll run
+            if (salaryAdvanceRepaymentRepository.existsByAdvance_IdAndPayrollRun_Id(
+                    advance.getId(), run.getId())) {
+                continue;
+            }
+
+            // Determine deduction amount – never exceed outstanding balance
+            BigDecimal installment = advance.getInstallmentAmount();
+            if (installment == null) {
+                installment = advance.getOutstandingBalance();
+            }
+            if (advance.getOutstandingBalance().compareTo(installment) < 0) {
+                installment = advance.getOutstandingBalance();
+            }
+
+            // Create payroll line item for the deduction
+            PayrollLineItem lineItem = PayrollLineItem.builder()
+                    .payrollRunEmployee(runEmp)
+                    .componentCode("SAL_ADV_DED")
+                    .componentName("Salary Advance Repayment")
+                    .type("DEDUCTION")
+                    .amount(installment)
+                    .build();
+            lineItem.setTenantId(tenantId);
+            lineItemRepository.save(lineItem);
+
+            // Update employee totals for the repayment deduction
+            runEmp.setTotalDeductions(runEmp.getTotalDeductions().add(installment));
+            runEmp.setNetSalary(runEmp.getNetSalary().subtract(installment));
+            // Persist the updated PayrollRunEmployee
+            runEmployeeRepository.save(runEmp);
+
+            // Create repayment record
+            int installmentNumber = salaryAdvanceRepaymentRepository
+                    .findByAdvance_IdAndTenantId(advance.getId(), tenantId)
+                    .size() + 1;
+
+            SalaryAdvanceRepayment repayment = SalaryAdvanceRepayment.builder()
+                    .advance(advance)
+                    .payrollRun(run)
+                    .amount(installment)
+                    .installmentNumber(installmentNumber)
+                    .deductionDate(LocalDate.now())
+                    .build();
+            repayment.setTenantId(tenantId);
+            salaryAdvanceRepaymentRepository.save(repayment);
+
+            // Update advance balance and status
+            advance.setOutstandingBalance(advance.getOutstandingBalance().subtract(installment));
+
+            if (advance.getStatus() == SalaryAdvanceStatus.APPROVED) {
+                advance.setStatus(SalaryAdvanceStatus.ACTIVE);
+            }
+
+            if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) == 0) {
+                advance.setStatus(SalaryAdvanceStatus.FULLY_REPAID);
+            } else if (advance.getOutstandingBalance().compareTo(BigDecimal.ZERO) > 0
+                    && advance.getStatus() == SalaryAdvanceStatus.ACTIVE) {
+                advance.setStatus(SalaryAdvanceStatus.PARTIALLY_REPAID);
+            }
+
+            salaryAdvanceRepository.save(advance);
+        }
+    }
+
     // =========================================================
 
     private StatutoryRuleDto toStatutoryRuleDto(StatutoryRule r) {
