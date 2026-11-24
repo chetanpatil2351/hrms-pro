@@ -84,8 +84,33 @@ export async function switchTenant(tenantId: string) {
 export function saveSession(data: AuthResponse) {
   setAccessToken(data.accessToken);
   setRefreshToken(data.refreshToken);
+  if (data.roles) {
+    localStorage.setItem('userRoles', JSON.stringify(data.roles));
+  }
+}
+
+export function getUserRoles(): string[] {
+  try {
+    const cached = localStorage.getItem('userRoles');
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+    const token = localStorage.getItem('accessToken');
+    if (!token) return [];
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    if (payload.roles && Array.isArray(payload.roles)) return payload.roles;
+  } catch {}
+  return [];
+}
+
+export function hasRole(roles: string | string[]): boolean {
+  const userRoles = getUserRoles();
+  const targetRoles = Array.isArray(roles) ? roles : [roles];
+  return targetRoles.some(r => userRoles.includes(r));
 }
 
 export function logout() {
   clearTokens();
+  localStorage.removeItem('userRoles');
 }

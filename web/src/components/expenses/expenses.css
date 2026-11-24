@@ -1,0 +1,310 @@
+/* Expenses & Reimbursement Styling */
+
+.exp-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+}
+
+.exp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.exp-header h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.exp-header p {
+  margin: 4px 0 0 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.exp-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.exp-metric-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 16px 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.exp-metric-card .label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #64748b;
+}
+
+.exp-metric-card .value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.exp-metric-card .sub-label {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.exp-metric-card.accent-blue { border-left: 4px solid #2563eb; }
+.exp-metric-card.accent-amber { border-left: 4px solid #f59e0b; }
+.exp-metric-card.accent-green { border-left: 4px solid #10b981; }
+.exp-metric-card.accent-purple { border-left: 4px solid #8b5cf6; }
+
+/* Filter Tabs & Toolbar */
+.exp-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  background: #ffffff;
+  padding: 12px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.exp-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.exp-tab-btn {
+  background: none;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.exp-tab-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.exp-tab-btn.active {
+  background: #0f172a;
+  color: #ffffff;
+}
+
+.exp-tab-count {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.exp-tab-btn:not(.active) .exp-tab-count {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.exp-filters-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.exp-input, .exp-select {
+  padding: 7px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #0f172a;
+  outline: none;
+  background: #fff;
+}
+
+.exp-input:focus, .exp-select:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+}
+
+/* Table */
+.exp-table-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.exp-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+}
+
+.exp-table th {
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 600;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.exp-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #1e293b;
+  vertical-align: middle;
+}
+
+.exp-table tr:hover td {
+  background: #f8fafc;
+}
+
+/* Badges */
+.exp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.exp-badge-SUBMITTED, .exp-badge-PENDING { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+.exp-badge-UNDER_REVIEW { background: #e0e7ff; color: #3730a3; border: 1px solid #c7d2fe; }
+.exp-badge-APPROVED { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+.exp-badge-REIMBURSED { background: #e0f2fe; color: #075985; border: 1px solid #bae6fd; }
+.exp-badge-REJECTED { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+.exp-badge-CANCELLED { background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
+
+.exp-category-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  background: #f1f5f9;
+  color: #334155;
+}
+
+/* Action Buttons */
+.exp-btn-approve {
+  background: #16a34a;
+  color: white;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  font-size: 12px;
+}
+.exp-btn-approve:hover { background: #15803d; }
+
+.exp-btn-reject {
+  background: #dc2626;
+  color: white;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  font-size: 12px;
+}
+.exp-btn-reject:hover { background: #b91c1c; }
+
+.exp-btn-reimburse {
+  background: #0284c7;
+  color: white;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  font-size: 12px;
+}
+.exp-btn-reimburse:hover { background: #0369a1; }
+
+.exp-btn-action {
+  background: #f1f5f9;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+  padding: 4px 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.exp-btn-action:hover {
+  background: #e2e8f0;
+}
+
+/* Modal Extensions */
+.exp-modal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.exp-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.exp-form-group label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.exp-form-group.full-width {
+  grid-column: 1 / -1;
+}
+
+.exp-receipt-box {
+  border: 2px dashed #cbd5e1;
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.exp-receipt-box:hover {
+  border-color: #94a3b8;
+  background: #f1f5f9;
+}
+
+.exp-rejection-alert {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 12px 16px;
+  color: #991b1b;
+  font-size: 13px;
+  margin-top: 12px;
+}

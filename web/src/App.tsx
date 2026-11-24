@@ -4,6 +4,7 @@ import {
   getMemberships,
   switchTenant,
   logout,
+  hasRole,
   type TenantMembership,
 } from './services/authService';
 import {
@@ -32,6 +33,12 @@ import { getTodayAttendance, getAttendanceHistory, checkIn, checkOut, type Atten
 import './App.css';
 import ShiftManagement from './ShiftManagement';
 import PayrollManagement from './payroll/PayrollManagement';
+import { CompanySettingsModal } from './components/company/CompanySettingsModal';
+import { BranchDepartmentView } from './components/company/BranchDepartmentView';
+import { MemberManagementView } from './components/company/MemberManagementView';
+import { RoleManagementView } from './components/rbac/RoleManagementView';
+import { MySalaryAdvancesView, AdminSalaryAdvancesView } from './components/salaryAdvance';
+import { MyExpensesView, AdminExpensesView } from './components/expenses';
 
 function App() {
   const [token, setToken] = useState(() => localStorage.getItem('accessToken'));
@@ -74,12 +81,16 @@ function App() {
   const [branchFilter, setBranchFilter] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [companySettingsModalOpen, setCompanySettingsModalOpen] = useState(false);
   // State for screen navigation
   const [screen, setScreen] = useState<
-    'login' | 'companies' | 'dashboard' | 'attendance' | 'shifts' | 'payroll'
+    'login' | 'companies' | 'dashboard' | 'attendance' | 'shifts' | 'payroll' | 'salary-advances' | 'salary-advance-approvals' | 'expenses' | 'expense-approvals' | 'company' | 'members' | 'roles'
   >(
     token && tenantId ? 'dashboard' : 'login'
   );
+
+  const isHrOrAdmin = hasRole(['ADMIN', 'HR_MANAGER']) ||
+    memberships.some(m => m.tenantId === tenantId && m.roles?.some(r => r === 'ADMIN' || r === 'HR_MANAGER'));
   // Attendance pagination
   const [attHistoryPage, setAttHistoryPage] = useState(0);
   const [punchLoading, setPunchLoading] = useState(false);
@@ -180,6 +191,7 @@ function App() {
       loadEmployees();
       loadDashboardStats();
       loadOrganizationOptions();
+      getMemberships().then(setMemberships).catch(() => {});
     }
   }, []);
 
@@ -236,6 +248,8 @@ function App() {
 
       setScreen('dashboard');
       await loadEmployees();
+      await loadOrganizationOptions();
+      getMemberships().then(setMemberships).catch(() => {});
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Company selection failed');
     } finally {
@@ -872,10 +886,24 @@ function App() {
         {/* Sidebar */}
         <aside className="sidebar">
           <div className="brand">HRMS <span>Pro</span></div>
-          {/* Navigation omitted for brevity */}
-          <button className="nav-btn" onClick={() => setScreen('attendance')}>Attendance</button>
-          <button className="nav-btn" onClick={() => setScreen('shifts')}>Shifts</button>
-          <button className="nav-btn" onClick={() => setScreen('payroll')}>Payroll</button>
+          <div className="nav-heading" style={{ margin: '8px 0 4px', paddingLeft: '12px' }}>MAIN</div>
+          <button className={`nav-btn ${screen === 'dashboard' ? 'active' : ''}`} onClick={() => setScreen('dashboard')}>👥 Employees</button>
+          <button className={`nav-btn ${screen === 'attendance' ? 'active' : ''}`} onClick={navigateToAttendance}>⏱️ Attendance</button>
+          <button className={`nav-btn ${screen === 'shifts' ? 'active' : ''}`} onClick={() => setScreen('shifts')}>📅 Shifts</button>
+          <button className={`nav-btn ${screen === 'payroll' ? 'active' : ''}`} onClick={() => setScreen('payroll')}>💰 Payroll</button>
+          <button className={`nav-btn ${screen === 'salary-advances' ? 'active' : ''}`} onClick={() => setScreen('salary-advances')}>💵 Salary Advances</button>
+          {isHrOrAdmin && (
+            <button className={`nav-btn ${screen === 'salary-advance-approvals' ? 'active' : ''}`} onClick={() => setScreen('salary-advance-approvals')}>💼 Advance Approvals</button>
+          )}
+          <button className={`nav-btn ${screen === 'expenses' ? 'active' : ''}`} onClick={() => setScreen('expenses')}>🧾 My Expenses</button>
+          {isHrOrAdmin && (
+            <button className={`nav-btn ${screen === 'expense-approvals' ? 'active' : ''}`} onClick={() => setScreen('expense-approvals')}>💼 Expense Management</button>
+          )}
+          
+          <div className="nav-heading" style={{ margin: '16px 0 4px', paddingLeft: '12px' }}>ORGANIZATION</div>
+          <button className={`nav-btn ${screen === 'company' ? 'active' : ''}`} onClick={() => setScreen('company')}>🏢 Branches & Depts</button>
+          <button className={`nav-btn ${screen === 'members' ? 'active' : ''}`} onClick={() => setScreen('members')}>👥 Team Members</button>
+          <button className={`nav-btn ${screen === 'roles' ? 'active' : ''}`} onClick={() => setScreen('roles')}>🛡️ Roles & RBAC</button>
         </aside>
         {/* Main content */}
         <main className="main-content">
@@ -883,8 +911,24 @@ function App() {
             <section className="dashboard-section">
               <div className="topbar">
                 <h2>Dashboard</h2>
-                <div>
-                  <span>{tenantName}</span>
+                <div className="topbar-actions">
+                  {memberships.length > 1 && (
+                    <select
+                      className="company-select-dropdown"
+                      value={tenantId || ''}
+                      onChange={(e) => chooseCompany(e.target.value)}
+                    >
+                      {memberships.map((m) => (
+                        <option key={m.tenantId} value={m.tenantId}>
+                          {m.tenantName} ({m.roles?.join(', ') || 'Member'})
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <span className="tenant-badge">🏢 {tenantName}</span>
+                  <button onClick={() => setCompanySettingsModalOpen(true)} className="secondary-btn">
+                    ⚙️ Settings
+                  </button>
                   <button onClick={handleLogout} className="secondary-btn">Logout</button>
                 </div>
               </div>
@@ -1065,6 +1109,60 @@ function App() {
           {/* Payroll */}
           {screen === 'payroll' && (
             <PayrollManagement tenantName={tenantName} onBack={() => setScreen('dashboard')} onLogout={handleLogout} />
+          )}
+          {/* Company Org (Branches & Departments) */}
+          {screen === 'company' && (
+            <div style={{ padding: '24px' }}>
+              <BranchDepartmentView />
+            </div>
+          )}
+          {/* Team Members & Invitations */}
+          {screen === 'members' && (
+            <div style={{ padding: '24px' }}>
+              <MemberManagementView />
+            </div>
+          )}
+          {/* Roles & Permissions (RBAC) */}
+          {screen === 'roles' && (
+            <div style={{ padding: '24px' }}>
+              <RoleManagementView onBack={() => setScreen('dashboard')} />
+            </div>
+          )}
+          {/* Salary Advances (Employee View) */}
+          {screen === 'salary-advances' && (
+            <div style={{ padding: '24px' }}>
+              <MySalaryAdvancesView
+                onBack={() => setScreen('dashboard')}
+                onNavigateToAdmin={isHrOrAdmin ? () => setScreen('salary-advance-approvals') : undefined}
+              />
+            </div>
+          )}
+          {/* Salary Advances (HR / Admin Approvals) */}
+          {screen === 'salary-advance-approvals' && (
+            <div style={{ padding: '24px' }}>
+              <AdminSalaryAdvancesView
+                onBack={() => setScreen('dashboard')}
+                onNavigateToMyAdvances={() => setScreen('salary-advances')}
+              />
+            </div>
+          )}
+          {/* Expenses & Reimbursements (Employee View) */}
+          {screen === 'expenses' && (
+            <div style={{ padding: '24px' }}>
+              <MyExpensesView
+                onBack={() => setScreen('dashboard')}
+                onNavigateToAdmin={isHrOrAdmin ? () => setScreen('expense-approvals') : undefined}
+              />
+            </div>
+          )}
+          {/* Expenses & Reimbursements (HR / Admin Approvals) */}
+          {screen === 'expense-approvals' && (
+            <div style={{ padding: '24px' }}>
+              <AdminExpensesView
+                onBack={() => setScreen('dashboard')}
+                onNavigateToMyExpenses={() => setScreen('expenses')}
+              />
+            </div>
           )}
           {/* Employee Profile Modal */}
           {selectedEmployee && (
@@ -1247,6 +1345,17 @@ function App() {
                 </form>
               </div>
             </div>
+          )}
+          {/* Company Settings Modal */}
+          {companySettingsModalOpen && (
+            <CompanySettingsModal
+              isOpen={companySettingsModalOpen}
+              onClose={() => setCompanySettingsModalOpen(false)}
+              onUpdated={(updatedTenant) => {
+                setTenantName(updatedTenant.name);
+                localStorage.setItem('activeTenantName', updatedTenant.name);
+              }}
+            />
           )}
         </main>
       </div>
